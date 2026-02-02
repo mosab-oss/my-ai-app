@@ -3,89 +3,111 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 from PIL import Image
+from streamlit_mic_recorder import mic_recorder  # استدعاء الميكروفون
 from gtts import gTTS
 import io
 
-# 1. إعدادات البداية
-st.set_page_config(page_title="مصعب AI - النسخة السينمائية", layout="wide")
+# 1. الإعدادات الأساسية
+st.set_page_config(page_title="مصعب AI - النسخة الكاملة", layout="wide")
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+api_key = os.getenv("GEMINI_API_KEY")
 
-# 2. محرك الرسم المطور (يحول وصفك البسيط إلى لوحة سينمائية)
+if not api_key:
+    st.error("يرجى إضافة GEMINI_API_KEY")
+    st.stop()
+
+genai.configure(api_key=api_key)
+
+# 2. وظيفة الصوت (الرد الصوتي)
+def speak(text):
+    try:
+        clean_text = text.replace('*', '').replace('#', '')
+        tts = gTTS(text=clean_text, lang='ar')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return fp
+    except: return None
+
+# 3. وظيفة الرسم الذكي
 def draw_smart_image(user_prompt):
     try:
-        # هنا نستخدم Gemini 3 Flash ليقوم بدور "كاتب السيناريو" ويحسن الوصف
+        # تحسين الوصف أولاً
         desc_model = genai.GenerativeModel("gemini-3-flash-preview")
-        enhancer_prompt = f"Convert this image description into a highly detailed cinematic prompt for Imagen 3: {user_prompt}"
-        enhanced_prompt = desc_model.generate_content(enhancer_prompt).text
-        
-        # الآن نرسل الوصف المطور لمحرك الرسم Imagen
-        # ملاحظة: إذا لم ينجح imagen-3، جرب استبداله بـ "imagen-3.0-generate-001"
+        enhanced_prompt = desc_model.generate_content(f"Enhance this for Imagen 3: {user_prompt}").text
+        # الرسم
         paint_model = genai.GenerativeModel("imagen-3.0-generate-001")
         response = paint_model.generate_content(enhanced_prompt)
-        
-        # التحقق من استلام بيانات الصورة
-        if response.candidates[0].content.parts[0].inline_data:
-            return response.candidates[0].content.parts[0].inline_data.data
-        return "وصف"
-    except Exception as e:
-        return f"error: {e}"
+        return response.candidates[0].content.parts[0].inline_data.data
+    except Exception as e: return f"error: {e}"
 
-# 3. وظيفة الصوت (الرد الذكي)
-def speak(text):
-    tts = gTTS(text=text.replace('*', '').replace('#', ''), lang='ar')
-    fp = io.BytesIO()
-    tts.write_to_fp(fp)
-    return fp
-
-# 4. واجهة المستخدم
+# 4. القائمة الجانبية (هنا تظهر النوافذ المفقودة)
 with st.sidebar:
-    st.header("🎨 خيارات المحرك")
-    mode = st.radio("اختر الوضع:", ["دردشة ورؤية 👁️", "رسم احترافي 🖌️"])
+    st.header("⚙️ التحكم والوسائط")
+    mode = st.radio("اختر الوضع:", ["دردشة ورؤية 💬", "رسم احترافي 🎨"])
+    
     st.divider()
-    st.subheader("🖼️ قسم الرؤية (Vision)")
-    uploaded_file = st.file_uploader("ارفع صورة لتحليلها:", type=["jpg", "png"])
-    if st.button("🗑️ مسح الذاكرة"):
+    
+    # نافذة الميكروفون (المغريفون)
+    st.subheader("🎙️ تسجيل صوتي")
+    audio_record = mic_recorder(
+        start_prompt="بدء التسجيل 🎤",
+        stop_prompt="إرسال الصوت 📤",
+        key='recorder'
+    )
+    
+    st.divider()
+    
+    # نافذة الرؤية (Vision)
+    st.subheader("🖼️ تحليل الصور")
+    uploaded_file = st.file_uploader("ارفع صورة:", type=["jpg", "png"])
+    
+    if st.button("🗑️ مسح المحادثة"):
         st.session_state.messages = []
         st.rerun()
 
-st.title("⚡ مساعد مصعب المتكامل")
+# 5. منطقة العمل الرئيسية
+st.title("⚡ مساعد مصعب الذكي")
 
-# --- منطق الرسم الاحترافي ---
-if mode == "رسم احترافي 🖌️":
-    prompt = st.text_input("صف ما تريد رسمه (بالعربي أو الإنجليزي):")
-    if st.button("توليد اللوحة الفنية"):
-        with st.spinner("جاري تحسين الوصف والرسم..."):
+if mode == "رسم احترافي 🎨":
+    prompt = st.text_input("ماذا تريدني أن أرسم؟")
+    if st.button("توليد اللوحة"):
+        with st.spinner("جاري الرسم..."):
             result = draw_smart_image(prompt)
             if isinstance(result, str) and "error" in result:
-                st.error("المحرك يحتاج VPN أمريكي للرسم البرمجي.")
-            elif result == "وصف":
-                st.warning("المحرك أعطى وصفاً فقط ولم يرسم. جرب تفعيل الـ VPN.")
-            else:
-                st.image(result, caption="تم التوليد بواسطة مصعب AI")
+                st.error("فشل الرسم. تأكد من VPN أمريكي.")
+            else: st.image(result)
 
-# --- منطق الدردشة والرؤية الشامل ---
 else:
     if "messages" not in st.session_state: st.session_state.messages = []
-    
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-    user_msg = st.chat_input("اسألني عن الصورة أو دردش...")
+    user_input = st.chat_input("اكتب رسالتك هنا...")
     
-    if user_msg or uploaded_file:
+    # التقاط المدخلات الصوتية
+    current_audio = audio_record['bytes'] if audio_record else None
+
+    if user_input or current_audio or uploaded_file:
+        query = user_input if user_input else ("حلل الصوت المرفق" if current_audio else "حلل الصورة")
+        
         with st.chat_message("user"):
-            st.write(user_msg if user_msg else "حلل هذه الصورة")
+            st.markdown(query)
             if uploaded_file: st.image(uploaded_file, width=300)
-            
+            if current_audio: st.audio(current_audio)
+
         with st.chat_message("assistant"):
             try:
                 model = genai.GenerativeModel("gemini-3-flash-preview")
-                content = [user_msg if user_msg else "ماذا ترى في هذه الصورة؟"]
+                content = [query]
                 if uploaded_file: content.append(Image.open(uploaded_file))
+                if current_audio: content.append({"mime_type": "audio/wav", "data": current_audio})
                 
                 response = model.generate_content(content)
-                st.write(response.text)
-                st.audio(speak(response.text), autoplay=True)
+                st.markdown(response.text)
+                
+                # الرد الصوتي
+                audio_fp = speak(response.text)
+                if audio_fp: st.audio(audio_fp, autoplay=True)
+                
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e: st.error(f"خطأ: {e}")
