@@ -3,111 +3,57 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 from PIL import Image
-from streamlit_mic_recorder import mic_recorder  # استدعاء الميكروفون
-from gtts import gTTS
-import io
 
-# 1. الإعدادات الأساسية
-st.set_page_config(page_title="مصعب AI - النسخة الكاملة", layout="wide")
+# 1. إعدادات المفتاح والبيئة
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-if not api_key:
-    st.error("يرجى إضافة GEMINI_API_KEY")
-    st.stop()
-
-genai.configure(api_key=api_key)
-
-# 2. وظيفة الصوت (الرد الصوتي)
-def speak(text):
-    try:
-        clean_text = text.replace('*', '').replace('#', '')
-        tts = gTTS(text=clean_text, lang='ar')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        return fp
-    except: return None
-
-# 3. وظيفة الرسم الذكي
-def draw_smart_image(user_prompt):
-    try:
-        # تحسين الوصف أولاً
-        desc_model = genai.GenerativeModel("gemini-3-flash-preview")
-        enhanced_prompt = desc_model.generate_content(f"Enhance this for Imagen 3: {user_prompt}").text
-        # الرسم
-        paint_model = genai.GenerativeModel("imagen-3.0-generate-001")
-        response = paint_model.generate_content(enhanced_prompt)
-        return response.candidates[0].content.parts[0].inline_data.data
-    except Exception as e: return f"error: {e}"
-
-# 4. القائمة الجانبية (هنا تظهر النوافذ المفقودة)
-with st.sidebar:
-    st.header("⚙️ التحكم والوسائط")
-    mode = st.radio("اختر الوضع:", ["دردشة ورؤية 💬", "رسم احترافي 🎨"])
+# 2. دالة التوليد الذكية (تنتقل بين الموديلات تلقائياً)
+def generate_content_with_fallback(contents):
+    # قائمة الموديلات حسب الأولوية
+    models_to_try = ["gemini-3-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     
-    st.divider()
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(contents)
+            return response.text, model_name  # نعيد النص واسم الموديل الذي نجح
+        except Exception as e:
+            # إذا كان الخطأ هو انتهاء الحصة (429)، نجرب الموديل التالي
+            if "429" in str(e) or "quota" in str(e).lower():
+                continue 
+            else:
+                return f"خطأ تقني: {e}", None
     
-    # نافذة الميكروفون (المغريفون)
-    st.subheader("🎙️ تسجيل صوتي")
-    audio_record = mic_recorder(
-        start_prompt="بدء التسجيل 🎤",
-        stop_prompt="إرسال الصوت 📤",
-        key='recorder'
-    )
-    
-    st.divider()
-    
-    # نافذة الرؤية (Vision)
-    st.subheader("🖼️ تحليل الصور")
-    uploaded_file = st.file_uploader("ارفع صورة:", type=["jpg", "png"])
-    
-    if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
+    return "عذراً، انتهت حصة جميع الموديلات المتاحة لليوم.", None
 
-# 5. منطقة العمل الرئيسية
-st.title("⚡ مساعد مصعب الذكي")
+# 3. واجهة التطبيق المبسطة
+st.title("🚀 مساعد مصعب الذكي (المضاد للتوقف)")
 
-if mode == "رسم احترافي 🎨":
-    prompt = st.text_input("ماذا تريدني أن أرسم؟")
-    if st.button("توليد اللوحة"):
-        with st.spinner("جاري الرسم..."):
-            result = draw_smart_image(prompt)
-            if isinstance(result, str) and "error" in result:
-                st.error("فشل الرسم. تأكد من VPN أمريكي.")
-            else: st.image(result)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-else:
-    if "messages" not in st.session_state: st.session_state.messages = []
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+# عرض المحادثة
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    user_input = st.chat_input("اكتب رسالتك هنا...")
-    
-    # التقاط المدخلات الصوتية
-    current_audio = audio_record['bytes'] if audio_record else None
+# إدخال المستخدم
+user_input = st.chat_input("اسألني أي شيء...")
 
-    if user_input or current_audio or uploaded_file:
-        query = user_input if user_input else ("حلل الصوت المرفق" if current_audio else "حلل الصورة")
-        
-        with st.chat_message("user"):
-            st.markdown(query)
-            if uploaded_file: st.image(uploaded_file, width=300)
-            if current_audio: st.audio(current_audio)
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-        with st.chat_message("assistant"):
-            try:
-                model = genai.GenerativeModel("gemini-3-flash-preview")
-                content = [query]
-                if uploaded_file: content.append(Image.open(uploaded_file))
-                if current_audio: content.append({"mime_type": "audio/wav", "data": current_audio})
-                
-                response = model.generate_content(content)
-                st.markdown(response.text)
-                
-                # الرد الصوتي
-                audio_fp = speak(response.text)
-                if audio_fp: st.audio(audio_fp, autoplay=True)
-                
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e: st.error(f"خطأ: {e}")
+    with st.chat_message("assistant"):
+        with st.spinner("جاري التفكير (نبحث عن موديل متاح)..."):
+            # محاولة التوليد مع خاصية الـ Fallback
+            answer, successful_model = generate_content_with_fallback([user_input])
+            
+            if successful_model:
+                st.markdown(answer)
+                st.caption(f"تمت الإجابة بواسطة محرك: {successful_model}")
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+            else:
+                st.error(answer)
