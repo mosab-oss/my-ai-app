@@ -3,111 +3,63 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 from PIL import Image
-from streamlit_mic_recorder import mic_recorder
 from gtts import gTTS
 import io
 
-# 1. إعدادات الصفحة
-st.set_page_config(page_title="مصعب AI - جيل Gemini 3", page_icon="⚡", layout="wide")
-
-# 2. إعداد الـ API (تأكد من وجود المفتاح في ملف .env أو Secrets)
+# 1. إعداد الصفحة والمفتاح
+st.set_page_config(page_title="مصعب AI المتكامل", layout="wide")
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    st.error("يرجى إضافة مفتاح الـ API الخاص بك.")
-    st.stop()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-genai.configure(api_key=api_key)
-
-# 3. دالة تحويل النص إلى صوت
-def speak_text(text):
+# 2. وظيفة الرسم (المبسطة لتجاوز التعارض)
+def draw_image(prompt):
     try:
-        clean_text = text.replace('*', '').replace('#', '')
-        tts = gTTS(text=clean_text, lang='ar', slow=False)
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        return fp
-    except: return None
+        # استخدام الموديل الموحد المتوافق مع جيل Gemini 3
+        model = genai.GenerativeModel("imagen-3.0-generate-001")
+        response = model.generate_content(prompt)
+        return response.candidates[0].content.parts[0].inline_data.data
+    except Exception as e:
+        return f"error: {e}"
 
-# 4. القائمة الجانبية (Sidebar) - تحتوي على زر الحذف والرؤية
+# 3. وظيفة الصوت
+def speak(text):
+    tts = gTTS(text=text.replace('*', ''), lang='ar')
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    return fp
+
+# 4. واجهة المستخدم (الرؤية في القائمة الجانبية)
 with st.sidebar:
-    st.title("🚀 لوحة تحكم Gemini 3")
-    persona = st.selectbox("شخصية المساعد:", ["مساعد عام", "خبير برمجيات", "مدرس لغات"])
-    
-    # اختيار الموديل كما يظهر في حسابك
-    model_choice = st.radio("المحرك النشط:", ["gemini-3-flash-preview", "🎨 رسم بالذكاء (Imagen 4)"])
-    
+    st.header("🖼️ قسم الرؤية (Vision)")
+    uploaded_file = st.file_uploader("ارفع صورة لتحليلها:", type=["jpg", "png"])
     st.divider()
-    
-    # --- ميزة الرؤية والتحليل (Vision) ---
-    st.subheader("🖼️ الرؤية والتحليل")
-    uploaded_file = st.file_uploader("ارفع صورة (كود، نص، منظر):", type=["jpg", "jpeg", "png"])
-    
-    st.divider()
-    
-    # --- الأوامر الصوتية ---
-    st.subheader("🎙️ الأوامر الصوتية")
-    audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
-    
-    st.divider()
-    
-    # --- زر مسح المحادثة (الذي كنت تبحث عنه) ---
-    if st.button("🗑️ مسح سجل المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
+    mode = st.radio("ماذا تريد أن أفعل؟", ["دردشة ورؤية 💬", "رسم صور 🎨"])
 
-# 5. منطق الدردشة والرؤية الشامل
-st.header(f"💬 مساعد مصعب الذكي (Gemini 3 Flash)")
+# 5. منطق التشغيل
+st.title("🚀 مساعد مصعب الذكي")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if mode == "رسم صور 🎨":
+    prompt = st.text_input("صف الصورة بالإنجليزية:")
+    if st.button("ارسم الآن"):
+        with st.spinner("جاري الرسم..."):
+            result = draw_image(prompt)
+            if isinstance(result, str) and "error" in result:
+                st.error("عذراً، محرك الرسم يحتاج VPN أمريكي ليعمل برمجياً.")
+            else:
+                st.image(result)
 
-# عرض الرسائل القديمة
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# استقبال المدخلات
-user_input = st.chat_input("دردش هنا أو اسأل عن الصورة...")
-current_audio = audio_record['bytes'] if audio_record else None
-
-if user_input or current_audio or uploaded_file:
-    # صياغة الاستعلام
-    if user_input:
-        query = user_input
-    elif current_audio:
-        query = "حلل الصوت المرفق وأجب عليه."
-    else:
-        query = "اشرح لي ماذا يوجد في هذه الصورة."
-
-    st.session_state.messages.append({"role": "user", "content": query})
-    with st.chat_message("user"):
-        st.markdown(query)
-        if uploaded_file: st.image(uploaded_file, width=300)
-
-    # توليد الرد من Gemini 3
-    with st.chat_message("assistant"):
-        with st.spinner("جاري التحليل والنطق..."):
-            try:
-                model = genai.GenerativeModel("gemini-3-flash-preview")
-                content_list = [f"بصفتك {persona}: {query}"]
-                
-                # إضافة الصورة للتحليل (Vision)
-                if uploaded_file:
-                    content_list.append(Image.open(uploaded_file))
-                
-                # إضافة الصوت للتحليل
-                if current_audio:
-                    content_list.append({"mime_type": "audio/wav", "data": current_audio})
-                
-                response = model.generate_content(content_list)
-                st.markdown(response.text)
-                
-                # الرد الصوتي
-                audio_fp = speak_text(response.text)
-                if audio_fp:
-                    st.audio(audio_fp, format='audio/mp3', autoplay=True)
-                
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                st.error(f"حدث خطأ: {e}")
+else: # وضع الدردشة والرؤية
+    user_msg = st.chat_input("اسأل عن الصورة أو دردش...")
+    if user_msg or uploaded_file:
+        with st.chat_message("user"):
+            st.write(user_msg if user_msg else "حلل هذه الصورة")
+            if uploaded_file: st.image(uploaded_file, width=300)
+        
+        with st.chat_message("assistant"):
+            model = genai.GenerativeModel("gemini-3-flash-preview")
+            content = [user_msg if user_msg else "ماذا يوجد في الصورة؟"]
+            if uploaded_file: content.append(Image.open(uploaded_file))
+            
+            response = model.generate_content(content)
+            st.write(response.text)
+            st.audio(speak(response.text), autoplay=True)
