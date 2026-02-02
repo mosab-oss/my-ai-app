@@ -8,13 +8,13 @@ from gtts import gTTS
 import io
 
 # 1. إعدادات الصفحة
-st.set_page_config(page_title="مصعب AI - المساعد المتكامل", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="مصعب AI - جيل Gemini 3", page_icon="⚡", layout="wide")
 
-# 2. إعداد المفاتيح
+# 2. إعداد الـ API
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    st.error("يرجى إضافة GEMINI_API_KEY في الإعدادات.")
+    st.error("يرجى إضافة مفتاح الـ API في الإعدادات.")
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -22,81 +22,65 @@ genai.configure(api_key=api_key)
 # 3. دالة الصوت
 def speak_text(text):
     try:
-        clean_text = text.replace('*', '').replace('#', '')
-        tts = gTTS(text=clean_text, lang='ar', slow=False)
+        tts = gTTS(text=text.replace('*', ''), lang='ar', slow=False)
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         return fp
     except: return None
 
-# 4. القائمة الجانبية
+# 4. القائمة الجانبية (الرؤية + المحرك الجديد)
 with st.sidebar:
-    st.title("⚙️ الإعدادات والوسائط")
-    persona = st.selectbox("شخصية المساعد:", ["مساعد عام", "خبير برمجيات", "مدرس لغات"])
-    model_choice = st.radio("المحرك:", ["gemini-2.5-flash", "gemma-3-27b-it", "توليد الصور (Imagen)"])
+    st.title("🚀 لوحة تحكم Gemini 3")
+    # تحديث الموديل ليطابق شاشتك (Gemini 3 Flash)
+    model_choice = st.radio("المحرك النشط:", ["gemini-3-flash-preview", "🎨 رسم بالذكاء (Imagen 4)"])
     
     st.divider()
     st.subheader("🖼️ الرؤية والتحليل (Vision)")
-    uploaded_file = st.file_uploader("ارفع صورة لنحللها:", type=["jpg", "jpeg", "png"])
+    uploaded_file = st.file_uploader("ارفع صورة لتحليلها:", type=["jpg", "jpeg", "png"])
     
     st.divider()
-    st.subheader("🎙️ الأوامر الصوتية")
     audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
-    
-    if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
 
-# 5. منطق توليد الصور (تم إصلاح الخطأ هنا)
-if model_choice == "توليد الصور (Imagen)":
-    st.header("🎨 محرك الرسم الذكي")
-    prompt = st.text_area("صف الصورة بالإنجليزية (مثال: A futuristic city at sunset):")
-    if st.button("إبدأ الرسم 🖌️"):
-        if prompt:
-            with st.spinner("جاري الرسم..."):
-                try:
-                    # الطريقة الأكثر استقراراً لتوليد الصور
-                    model = genai.GenerativeModel('imagen-3.0-generate-001')
-                    response = model.generate_content(prompt)
-                    # استخراج الصورة من الاستجابة
-                    image_data = response.candidates[0].content.parts[0].inline_data.data
-                    st.image(image_data, caption="تم التوليد بواسطة مصعب AI")
-                except Exception as e:
-                    st.error(f"عذراً، محرك الرسم يحتاج لصلاحيات خاصة في بعض الحسابات. الخطأ: {e}")
-        else: st.warning("يرجى كتابة وصف.")
+# 5. منطق توليد الصور (Imagen 4)
+if "رسم" in model_choice:
+    st.header("🎨 محرك Imagen 4 الجديد")
+    prompt = st.text_area("صف الصورة بالإنجليزية:")
+    if st.button("توليد الصورة 🖌️"):
+        with st.spinner("جاري الرسم باستخدام Imagen 4..."):
+            try:
+                # تحديث اسم الموديل ليطابق المتاح في حسابك
+                model = genai.ImageGenerationModel("imagen-4")
+                result = model.generate_images(prompt=prompt, number_of_images=1)
+                st.image(result.images[0]._pil_image)
+            except Exception as e:
+                st.error(f"تأكد من تفعيل VPN أمريكي، الخطأ: {e}")
 
-# 6. منطق الدردشة الشامل (الرؤية + الصوت + النص)
+# 6. منطق الدردشة والرؤية (Gemini 3 Flash)
 else:
-    st.header(f"💬 الدردشة والتحليل ({model_choice})")
+    st.header("💬 مساعد مصعب (Gemini 3 Flash)")
     if "messages" not in st.session_state: st.session_state.messages = []
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
-
-    user_input = st.chat_input("اسأل عن الصورة أو اطلب حل كود...")
+    user_input = st.chat_input("اسأل عن الصورة أو دردش...")
     current_audio = audio_record['bytes'] if audio_record else None
-    
+
     if user_input or current_audio or uploaded_file:
-        query = user_input if user_input else ("حلل الصورة" if uploaded_file else "حلل الصوت")
+        query = user_input if user_input else "حلل المحتوى المرفق."
         
-        st.session_state.messages.append({"role": "user", "content": query})
         with st.chat_message("user"):
             st.markdown(query)
             if uploaded_file: st.image(uploaded_file, width=300)
-            if current_audio: st.audio(current_audio)
 
         with st.chat_message("assistant"):
-            with st.spinner("جاري التحليل والنطق..."):
-                try:
-                    model = genai.GenerativeModel(model_choice)
-                    content_list = [f"تقمص دور {persona}: {query}"]
-                    if uploaded_file: content_list.append(Image.open(uploaded_file))
-                    if current_audio: content_list.append({"mime_type": "audio/wav", "data": current_audio})
-                    
-                    response = model.generate_content(content_list)
-                    st.markdown(response.text)
-                    
-                    audio_fp = speak_text(response.text)
-                    if audio_fp: st.audio(audio_fp, format='audio/mp3', autoplay=True)
-                    st.session_state.messages.append({"role": "assistant", "content": response_text})
-                except Exception as e: st.error(f"حدث خطأ: {e}")
+            try:
+                # استخدام Gemini 3 Flash كما يظهر في شاشتك
+                model = genai.GenerativeModel("gemini-3-flash-preview")
+                content = [f"بصفتك مساعد مصعب: {query}"]
+                if uploaded_file: content.append(Image.open(uploaded_file))
+                
+                response = model.generate_content(content)
+                st.markdown(response.text)
+                
+                # الرد الصوتي التلقائي
+                audio_output = speak_text(response.text)
+                if audio_output: st.audio(audio_output, format='audio/mp3', autoplay=True)
+            except Exception as e: st.error(f"خطأ: {e}")
