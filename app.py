@@ -1,102 +1,79 @@
 import streamlit as st
-import requests
+import google.generativeai as genai
 import os
-import base64
-import logging
 from dotenv import load_dotenv
 
-# 1. إعداد التسجيل والبيئة
-logging.basicConfig(level=logging.INFO)
-load_dotenv()
+# إعداد الصفحة
+st.set_page_config(page_title="مصعب AI المتطور", page_icon="🚀")
 
-# التحقق من وجود المفتاح قبل البدء
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    st.error("❌ لم يتم العثور على API_KEY في ملف .env")
+# تحميل مفتاح الـ API
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+
+if not api_key:
+    st.error("لم يتم العثور على مفتاح الـ API. تأكد من إعداده في الـ Secrets.")
     st.stop()
 
-# --- 2. فصل المهام إلى دوال (Functions) ---
+genai.configure(api_key=api_key)
 
-def encode_image_to_base64(uploaded_file):
-    """تحويل الصورة إلى نص مشفر لإرسالها للـ API"""
-    try:
-        return base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
-    except Exception as e:
-        logging.error(f"خطأ في معالجة الصورة: {e}")
-        return None
-
-def build_message(prompt, persona_name, encoded_image=None, mime_type=None):
-    """بناء هيكل الرسالة المطلوب من جوجل"""
-    system_instructions = {
-        "مهندس برمجيات محترف": "أنت خبير برمجة، أجب بكود نظيف وشرح تقني.",
-        "مدرس لغات": "أنت مدرس لغة ودود، صحح الأخطاء واشرح القواعد.",
-        "مساعد عام": "أنت مساعد ذكي ولطيف."
-    }
-    
-    instruction = system_instructions.get(persona_name, "")
-    full_text = f"{instruction}\n\nالسؤال: {prompt}"
-    
-    parts = [{"text": full_text}]
-    
-    if encoded_image:
-        parts.append({
-            "inline_data": {
-                "mime_type": mime_type,
-                "data": encoded_image
-            }
-        })
-    
-    return {"role": "user", "parts": parts}
-
-# --- 3. واجهة المستخدم ---
-
-st.set_page_config(page_title="منصة مصعب الاحترافية", layout="wide")
-
+# واجهة المستخدم الجانبية
 with st.sidebar:
     st.title("⚙️ الإعدادات")
-    persona = st.selectbox("الشخصية:", ["مساعد عام", "مهندس برمجيات محترف", "مدرس لغات"])
-    model_choice = st.radio("المحرك:", ["gemini-2.5-flash", "gemma-3-27b-it"], index=0)
-    uploaded_file = st.file_uploader("ارفع صورة:", type=["png", "jpg", "jpeg"])
-    if st.button("🗑️ مسح المحادثة"):
+    model_choice = st.radio(
+        "اختر المحرك:",
+        ["gemini-2.5-flash", "gemma-3-27b-it", "توليد الصور (Imagen 3)"],
+        index=0
+    )
+    st.info("ملاحظة: محرك الصور يفضل الوصف بالإنجليزية.")
+
+# منطق عمل التطبيق
+if model_choice == "توليد الصور (Imagen 3)":
+    st.header("🎨 صانع الصور الذكي")
+    st.write("اكتب وصفاً لما تريد رسمه، وسأقوم بتحويل خيالك إلى حقيقة.")
+    
+    prompt = st.text_area("وصف الصورة (Prompt):", placeholder="مثلاً: A futuristic city with flying cars at sunset...")
+    
+    if st.button("إبدأ الرسم 🖌️"):
+        if prompt:
+            with st.spinner("جاري الرسم... قد يستغرق الأمر ثوانٍ قليلة"):
+                try:
+                    # استدعاء نموذج الصور
+                    image_model = genai.GenerativeModel("imagen-3.0-generate-001")
+                    result = image_model.generate_content(prompt)
+                    
+                    # عرض الصورة
+                    # ملاحظة: بعض إصدارات المكتبة تعيد الصورة كبايتات مباشرة
+                    st.image(result.candidates[0].content.parts[0].inline_data.data, caption="الصورة الناتجة بواسطة مصعب AI")
+                    st.success("تم الرسم بنجاح!")
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء الرسم: {e}")
+        else:
+            st.warning("الرجاء إدخال وصف للصورة.")
+
+else:
+    # محرك الدردشة (للنماذج النصية)
+    st.header(f"💬 الدردشة الذكية ({model_choice})")
+    
+    if "messages" not in st.session_state:
         st.session_state.messages = []
-        st.rerun()
 
-st.title(f"🚀 {model_choice}")
+    # عرض تاريخ المحادثة
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # إدخال المستخدم
+    if prompt := st.chat_input("بماذا يمكنني مساعدتك اليوم؟"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-# عرض الدردشة
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["parts"][0]["text"])
-
-# منطقة الإدخال
-if prompt := st.chat_input("اسألني أي شيء..."):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # معالجة الصورة إن وجدت
-    encoded_img = encode_image_to_base64(uploaded_file) if uploaded_file else None
-    
-    # بناء الرسالة وإضافتها للذاكرة
-    user_msg = build_message(prompt, persona, encoded_img, uploaded_file.type if uploaded_file else None)
-    st.session_state.messages.append(user_msg)
-
-    # الاتصال بالـ API
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_choice}:generateContent?key={API_KEY}"
-    
-    try:
-        with st.spinner("جاري التفكير..."):
-            response = requests.post(url, json={"contents": st.session_state.messages})
-            response.raise_for_status()
-            result = response.json()
-            
-            answer = result['candidates'][0]['content']['parts'][0]['text']
-            with st.chat_message("model"):
-                st.markdown(answer)
-            st.session_state.messages.append({"role": "model", "parts": [{"text": answer}]})
-            
-    except requests.exceptions.RequestException as e:
-        st.error(f"⚠️ خطأ في الاتصال: تأكد من الكوتا أو اتصال الإنترنت.")
-        logging.exception("API Call Failed")
+        with st.chat_message("assistant"):
+            with st.spinner("جاري التفكير..."):
+                try:
+                    model = genai.GenerativeModel(model_choice)
+                    response = model.generate_content(prompt)
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"خطأ في المحرك: {e}")
