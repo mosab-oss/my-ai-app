@@ -7,11 +7,12 @@ from gtts import gTTS
 import io
 import urllib.parse
 import re
+import json
 
 # 1. إعدادات الصفحة والاتصال
 st.set_page_config(page_title="منصة مصعب الشاملة", layout="wide", page_icon="💎")
 
-# جلب المفتاح من Secrets (كما في صورتك رقم 9 ورقم 13)
+# جلب المفتاح من Secrets
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
@@ -19,16 +20,15 @@ else:
     st.error("⚠️ المفتاح غير موجود في Secrets!")
     st.stop()
 
-# دالة الرسم الإبداعي (لتحويل نصوص Gemma 3 لصور حقيقية)
+# دالة الرسم الإبداعي
 def draw_image(description):
     encoded = urllib.parse.quote(description)
     return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=42"
 
-# 2. القائمة الجانبية: التخصصات والأدوات
+# 2. القائمة الجانبية: التخصصات، الأدوات، وتحميل المحادثة
 with st.sidebar:
     st.header("⚙️ إعدادات المساعد")
     
-    # ميزة اختيار التخصص
     persona = st.selectbox(
         "اختر تخصص المساعد:",
         ["مساعد ذكي عام", "خبير برمجة وتطوير", "مدرس لغات محترف", "مصمم صور إبداعي"]
@@ -48,9 +48,17 @@ with st.sidebar:
     st.divider()
     uploaded_file = st.file_uploader("رفع صورة:", type=["jpg", "png", "jpeg"])
     
-    if st.button("🗑️ مسح الذاكرة"):
-        st.session_state.messages = []
-        st.rerun()
+    st.divider()
+    # ميزة تحميل ومسح المحادثة (كما في صورتك 17)
+    if "messages" in st.session_state and st.session_state.messages:
+        # زر تحميل المحادثة
+        chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+        st.download_button(label="📥 تحميل المحادثة", data=chat_text, file_name="mosab_chat.txt", mime="text/plain")
+        
+        # زر مسح المحادثة
+        if st.button("🗑️ مسح المحادثة"):
+            st.session_state.messages = []
+            st.rerun()
 
 # 3. الواجهة الرئيسية
 st.title(f"💎 {persona}")
@@ -63,14 +71,14 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
         if "img_url" in msg: st.image(msg["img_url"])
 
-# 4. نظام "الانتقال التلقائي" المطور (يضم Gemma 3 و Gemini 2.5)
+# 4. نظام "الانتقال التلقائي" الشامل (Hierarchy)
 def generate_smart_response(contents):
-    # ترتيب الموديلات حسب القوة والاستجابة في حسابك (صور 15 و 16)
+    # ترتيب الموديلات لضمان الاستجابة غداً وكل يوم
     model_hierarchy = [
-        "gemini-3-pro-preview",   # الأقوى (صورة 15)
-        "gemma-3-27b-it",         # المستجيب الجديد (صورة 17)
-        "gemini-2.5-flash-exp",   # المحلل البصري الرائع (صورة 16)
-        "gemini-1.5-flash"        # المنقذ السريع
+        "gemini-3-pro-preview",   
+        "gemma-3-27b-it",         
+        "gemini-2.5-flash-exp",   
+        "gemini-1.5-flash"
     ]
     
     for m_name in model_hierarchy:
@@ -79,8 +87,7 @@ def generate_smart_response(contents):
             response = model.generate_content(contents)
             if response and response.text:
                 return response.text, m_name
-        except Exception as e:
-            # الانتقال للموديل التالي عند حدوث خطأ 429 (صورة 12)
+        except:
             continue
     return None, None
 
@@ -95,11 +102,9 @@ if user_input or current_audio or uploaded_file:
         if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"جاري البحث عن محرك متاح للرد كـ {persona}..."):
+        with st.spinner(f"جاري البحث عن محرك متاح..."):
             
-            # دمج التخصص مع الطلب
             full_prompt = f"تعليماتك: {persona_instr[persona]}\n\nطلب المستخدم: {prompt}"
-            
             contents = [full_prompt]
             if uploaded_file: contents.append(Image.open(uploaded_file))
             if current_audio: contents.append({"mime_type": "audio/wav", "data": current_audio})
@@ -107,20 +112,19 @@ if user_input or current_audio or uploaded_file:
             raw_text, used_model = generate_smart_response(contents)
             
             if raw_text:
-                # تنظيف النص من أفكار الموديل (Thought)
+                # تنظيف الرد من الـ Thought (الذي ظهر في صورتك 1)
                 clean_answer = re.sub(r'\{.*?\}', '', raw_text, flags=re.DOTALL)
                 clean_answer = re.sub(r'thought:.*', '', clean_answer, flags=re.IGNORECASE).strip()
 
-                # ميزة الرسم التلقائي (تعمل مع كل الموديلات)
                 img_url = None
                 if any(x in prompt for x in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
                     img_url = draw_image(prompt)
                     st.image(img_url, caption=f"تم التوليد بواسطة {used_model}")
 
                 st.markdown(clean_answer)
-                st.caption(f"🚀 المحرك النشط الآن: {used_model}")
+                st.caption(f"🚀 المحرك النشط: {used_model}")
                 
-                # الرد الصوتي
+                # الرد الصوتي الآلي
                 try:
                     tts = gTTS(text=clean_answer[:200], lang='ar')
                     audio_fp = io.BytesIO()
@@ -130,4 +134,4 @@ if user_input or current_audio or uploaded_file:
                 
                 st.session_state.messages.append({"role": "assistant", "content": clean_answer, "img_url": img_url})
             else:
-                st.error("❌ عذراً مصعب، جميع المحركات (3.0, Gemma 3, 2.5) مشغولة حالياً.")
+                st.error("❌ جميع المحركات استهلكت حصتها اليومية.")
