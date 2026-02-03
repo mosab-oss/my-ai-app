@@ -8,10 +8,10 @@ import io
 import re
 import urllib.parse
 
-# 1. إعدادات الصفحة والاتصال
+# 1. إعدادات الصفحة
 st.set_page_config(page_title="مساعد مصعب المتكامل", layout="wide", page_icon="⚡")
 
-# جلب المفتاح بشكل آمن
+# جلب المفتاح بشكل آمن من Secrets
 api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not api_key:
     st.error("❌ يرجى إضافة GEMINI_API_KEY في إعدادات Streamlit.")
@@ -22,26 +22,10 @@ genai.configure(api_key=api_key)
 # 2. دالة الرسم التلقائي (لحل مشكلة عدم ظهور الصور)
 def draw_image(description):
     encoded_desc = urllib.parse.quote(description)
+    # محرك خارجي لضمان تحويل الوصف إلى صورة حقيقية
     return f"https://pollinations.ai/p/{encoded_desc}?width=1024&height=1024&seed=42"
 
-# 3. دالة التوليد الذكية (تحديث الأسماء التقنية)
-def smart_generate(contents):
-    # قائمة الموديلات بناءً على صورتك الأخيرة في AI Studio
-    models_to_try = [
-        "gemini-3-pro-preview",    # الموديل الذي ظهر في صورتك السادسة
-        "gemini-1.5-flash",        # الموديل الاحتياطي المستقر
-    ]
-    
-    for m_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(m_name)
-            response = model.generate_content(contents)
-            return response.text, m_name
-        except:
-            continue
-    return "🚫 لم نتمكن من الاتصال بالموديل حالياً.", None
-
-# 4. واجهة التحكم الجانبية (إعادة الميكروفون والصور)
+# 3. واجهة التحكم الجانبية (إعادة الميكروفون والصور)
 with st.sidebar:
     st.header("🎨 أدوات التحكم")
     audio_record = mic_recorder(start_prompt="تحدث الآن 🎤", stop_prompt="إرسال 📤", key='recorder')
@@ -51,18 +35,19 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# 5. الواجهة الرئيسية
+# 4. الواجهة الرئيسية
 st.title("⚡ مساعد مصعب المتكامل")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# عرض المحادثة السابقة
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "img_url" in msg: st.image(msg["img_url"])
 
-# 6. معالجة الطلبات
+# 5. معالجة الطلبات
 user_input = st.chat_input("اطلب رسم صورة أو اسأل سؤالاً...")
 current_audio = audio_record['bytes'] if audio_record else None
 
@@ -73,28 +58,42 @@ if user_input or current_audio or uploaded_file:
         if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        with st.spinner("جاري التفكير والرسم..."):
-            contents = [prompt]
-            if uploaded_file: contents.append(Image.open(uploaded_file))
-            if current_audio: contents.append({"mime_type": "audio/wav", "data": current_audio})
+        with st.spinner("جاري المعالجة بواسطة Gemini 3..."):
+            # استخدام الاسم التقني الصحيح بناءً على صورتك من AI Studio
+            # جربنا Pro Preview، وإذا فشل نستخدم الفلاش المستقر
+            model_names = ["gemini-3-pro-preview", "gemini-1.5-flash"]
+            raw_text = ""
+            used_model = ""
             
-            raw_text, used_model = smart_generate(contents)
-            
+            for m_name in model_names:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    contents = [prompt]
+                    if uploaded_file: contents.append(Image.open(uploaded_file))
+                    if current_audio: contents.append({"mime_type": "audio/wav", "data": current_audio})
+                    
+                    response = model.generate_content(contents)
+                    raw_text = response.text
+                    used_model = m_name
+                    break
+                except:
+                    continue
+
             if used_model:
-                # تنظيف الرد من أكواد JSON و "Thought" التي تظهر في صورك
+                # تنظيف الرد من أفكار الموديل (Thought) التي ظهرت في صورك (2 و 3)
                 clean_answer = re.sub(r'\{.*?\}', '', raw_text, flags=re.DOTALL)
                 clean_answer = re.sub(r'thought:.*', '', clean_answer, flags=re.IGNORECASE).strip()
 
-                # ميزة الرسم التلقائي
+                # ميزة الرسم التلقائي عند طلب صورة
                 img_url = None
                 if any(x in prompt for x in ["ارسم", "صورة", "تخيل", "draw", "image"]):
                     img_url = draw_image(prompt)
                     st.image(img_url, caption="الصورة التي رسمتها لك")
 
                 st.markdown(clean_answer if clean_answer else "تفضل الصورة التي طلبتها:")
-                st.caption(f"🤖 المحرك: {used_model}")
+                st.caption(f"🤖 تم الرد بواسطة المحرك: {used_model}")
                 
-                # الرد الصوتي
+                # الرد الصوتي التلقائي
                 try:
                     tts = gTTS(text=clean_answer[:200] if clean_answer else "تفضل", lang='ar')
                     audio_fp = io.BytesIO()
@@ -102,6 +101,9 @@ if user_input or current_audio or uploaded_file:
                     st.audio(audio_fp, autoplay=True)
                 except: pass
                 
+                # حفظ في الذاكرة
                 new_msg = {"role": "assistant", "content": clean_answer}
                 if img_url: new_msg["img_url"] = img_url
                 st.session_state.messages.append(new_msg)
+            else:
+                st.error("❌ لم نتمكن من الاتصال بالموديل. تأكد من مفتاح الـ API.")
