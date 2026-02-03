@@ -9,9 +9,9 @@ import urllib.parse
 import re
 
 # 1. إعدادات الصفحة والاتصال
-st.set_page_config(page_title="مساعد مصعب الذكي", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="منصة مصعب الشاملة", layout="wide", page_icon="💎")
 
-# جلب المفتاح من Secrets (الذي تأكدنا منه في صورتك رقم 9)
+# جلب المفتاح من Secrets (كما في صورتك رقم 9 ورقم 13)
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
@@ -19,7 +19,7 @@ else:
     st.error("⚠️ المفتاح غير موجود في Secrets!")
     st.stop()
 
-# دالة الرسم الإبداعي
+# دالة الرسم الإبداعي (لتحويل نصوص Gemma 3 لصور حقيقية)
 def draw_image(description):
     encoded = urllib.parse.quote(description)
     return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=42"
@@ -28,7 +28,7 @@ def draw_image(description):
 with st.sidebar:
     st.header("⚙️ إعدادات المساعد")
     
-    # ميزة اختيار التخصص (التي طلبتها)
+    # ميزة اختيار التخصص
     persona = st.selectbox(
         "اختر تخصص المساعد:",
         ["مساعد ذكي عام", "خبير برمجة وتطوير", "مدرس لغات محترف", "مصمم صور إبداعي"]
@@ -53,7 +53,7 @@ with st.sidebar:
         st.rerun()
 
 # 3. الواجهة الرئيسية
-st.title(f"⚡ {persona}")
+st.title(f"💎 {persona}")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -63,23 +63,24 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
         if "img_url" in msg: st.image(msg["img_url"])
 
-# 4. نظام "الانتقال التلقائي" المطور (The Core Logic)
+# 4. نظام "الانتقال التلقائي" المطور (يضم Gemma 3 و Gemini 2.5)
 def generate_smart_response(contents):
-    # قائمة الموديلات مرتبة: Gemini 3 (الأقوى) -> Gemini 2 (الأسرع) -> Gemini 1.5 (الاحتياطي)
+    # ترتيب الموديلات حسب القوة والاستجابة في حسابك (صور 15 و 16)
     model_hierarchy = [
-        "gemini-3-pro-preview", 
-        "gemini-2.0-flash-exp", 
-        "gemini-1.5-flash", 
-        "gemini-1.5-pro"
+        "gemini-3-pro-preview",   # الأقوى (صورة 15)
+        "gemma-3-27b-it",         # المستجيب الجديد (صورة 17)
+        "gemini-2.5-flash-exp",   # المحلل البصري الرائع (صورة 16)
+        "gemini-1.5-flash"        # المنقذ السريع
     ]
     
     for m_name in model_hierarchy:
         try:
             model = genai.GenerativeModel(m_name)
             response = model.generate_content(contents)
-            return response.text, m_name
+            if response and response.text:
+                return response.text, m_name
         except Exception as e:
-            # إذا حدث خطأ (مثل Quota Exceeded في صورتك 10)، سينتقل للموديل التالي تلقائياً
+            # الانتقال للموديل التالي عند حدوث خطأ 429 (صورة 12)
             continue
     return None, None
 
@@ -94,7 +95,7 @@ if user_input or current_audio or uploaded_file:
         if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"جاري اختيار أفضل محرك متاح للرد كـ {persona}..."):
+        with st.spinner(f"جاري البحث عن محرك متاح للرد كـ {persona}..."):
             
             # دمج التخصص مع الطلب
             full_prompt = f"تعليماتك: {persona_instr[persona]}\n\nطلب المستخدم: {prompt}"
@@ -106,18 +107,18 @@ if user_input or current_audio or uploaded_file:
             raw_text, used_model = generate_smart_response(contents)
             
             if raw_text:
-                # تنظيف النص من أفكار الموديل (Thought) كما ظهر في صورك 1 و 2
+                # تنظيف النص من أفكار الموديل (Thought)
                 clean_answer = re.sub(r'\{.*?\}', '', raw_text, flags=re.DOTALL)
                 clean_answer = re.sub(r'thought:.*', '', clean_answer, flags=re.IGNORECASE).strip()
 
-                # ميزة الرسم التلقائي
+                # ميزة الرسم التلقائي (تعمل مع كل الموديلات)
                 img_url = None
                 if any(x in prompt for x in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
                     img_url = draw_image(prompt)
                     st.image(img_url, caption=f"تم التوليد بواسطة {used_model}")
 
                 st.markdown(clean_answer)
-                st.caption(f"🚀 المحرك النشط: {used_model}")
+                st.caption(f"🚀 المحرك النشط الآن: {used_model}")
                 
                 # الرد الصوتي
                 try:
@@ -129,4 +130,4 @@ if user_input or current_audio or uploaded_file:
                 
                 st.session_state.messages.append({"role": "assistant", "content": clean_answer, "img_url": img_url})
             else:
-                st.error("❌ عذراً مصعب، جميع المحركات (3.0 و 2.0 و 1.5) مشغولة حالياً أو انتهت حصتها اليومية.")
+                st.error("❌ عذراً مصعب، جميع المحركات (3.0, Gemma 3, 2.5) مشغولة حالياً.")
