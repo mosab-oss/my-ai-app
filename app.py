@@ -9,23 +9,24 @@ import io
 import re
 
 # 1. إعدادات الصفحة والبيئة
-st.set_page_config(page_title="مساعد مصعب المتكامل V2", layout="wide", page_icon="🎨")
+st.set_page_config(page_title="مساعد مصعب المتكامل V3", layout="wide", page_icon="🌄")
 load_dotenv()
 
 # 2. إعداد الاتصال بمفتاح الـ API
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    st.error("❌ لم يتم العثور على المفتاح. أضفه في ملف .env باسم GEMINI_API_KEY")
+    st.error("❌ المفتاح غير موجود في ملف .env")
     st.stop()
 
 genai.configure(api_key=api_key)
 
 # 3. دالة التوليد الذكية (تجاوز الأخطاء والتبديل التلقائي)
 def smart_generate(contents):
+    # القائمة المحدثة بناءً على حسابك في AI Studio لتجنب خطأ 404
     models_to_try = [
-        "gemini-3-flash-preview",  # الموديل الذي ظهر في حسابك
-        "gemini-2.0-flash-exp",    # الموديل البديل القوي
-        "gemini-1.5-flash"         # الموديل الاحتياطي
+        "gemini-3-flash-preview",  # الموديل التجريبي الجديد
+        "gemini-2.0-flash-exp",    # الموديل البديل السريع
+        "gemini-1.5-flash"         # الموديل الاحتياطي المستقر
     ]
     
     for model_name in models_to_try:
@@ -34,28 +35,41 @@ def smart_generate(contents):
             response = model.generate_content(contents)
             return response.text, model_name
         except Exception as e:
+            # تخطي أخطاء الحصة (429) أو عدم وجود الموديل (404)
             if "404" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 continue 
             else:
                 return f"⚠️ خطأ تقني: {e}", None
-    return "🚫 جميع المحركات مشغولة حالياً.", None
+    return "🚫 عذراً، جميع المحركات غير متاحة حالياً.", None
 
-# 4. دالة النطق الصوتي
+# 4. دالة معالجة الرد (لتحويل أكواد JSON إلى نصوص مفهومة)
+def clean_response(text):
+    # إذا حاول الموديل كتابة كود توليد صورة، نستخرج الوصف فقط
+    if '"prompt":' in text:
+        match = re.search(r'"prompt":\s*"([^"]+)"', text)
+        if match:
+            return f"🎨 **طلب توليد صورة:** {match.group(1)}"
+    
+    # تنظيف النصوص من الروابط الطويلة أو الأكواد المزعجة
+    clean_text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
+    return clean_text if clean_text.strip() else text
+
+# 5. دالة النطق الصوتي
 def speak(text):
     try:
-        clean_text = re.sub(r'[*#_]', '', text[:250])
-        tts = gTTS(text=clean_text, lang='ar')
+        clean_for_audio = re.sub(r'[*#_]', '', text[:250])
+        tts = gTTS(text=clean_for_audio, lang='ar')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         return fp
     except:
         return None
 
-# 5. القائمة الجانبية (صوت وصورة)
+# 6. واجهة التطبيق (القائمة الجانبية)
 with st.sidebar:
     st.header("🎨 أدوات التحكم")
-    st.subheader("🎙️ الميكروفون")
-    audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
+    st.subheader("🎙️ تسجيل صوتي")
+    audio_record = mic_recorder(start_prompt="تحدث الآن 🎤", stop_prompt="إرسال 📤", key='recorder')
     
     st.divider()
     st.subheader("🖼️ تحليل الصور")
@@ -65,9 +79,9 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# 6. الواجهة الرئيسية وعرض المحتوى
+# 7. الواجهة الرئيسية وعرض المحادثة
 st.title("⚡ مساعد مصعب المتكامل")
-st.info("تم تفعيل ميزة إظهار الصور المولدة تلقائياً.")
+st.info("تم تحديث الموديلات لتعمل مع Gemini 3 Preview ومعالجة الأكواد تلقائياً.")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -77,41 +91,35 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # استقبال المدخلات
-user_input = st.chat_input("اطلب وصفاً أو صورة...")
+user_input = st.chat_input("اكتب سؤالك أو اطلب صورة...")
 current_audio = audio_record['bytes'] if audio_record else None
 
 if user_input or current_audio or uploaded_file:
-    prompt = user_input if user_input else "حلل المحتوى"
+    prompt = user_input if user_input else "حلل المحتوى المرفق"
     
     with st.chat_message("user"):
         st.markdown(prompt)
         if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        with st.spinner("جاري المعالجة..."):
+        with st.spinner("جاري التفكير والتبديل بين المحركات..."):
             content_list = [prompt]
             if uploaded_file: content_list.append(Image.open(uploaded_file))
             if current_audio: content_list.append({"mime_type": "audio/wav", "data": current_audio})
             
-            answer, used_model = smart_generate(content_list)
+            raw_answer, used_model = smart_generate(content_list)
             
             if used_model:
-                # --- ميزة ذكاء عرض الصور الجديدة ---
-                # البحث عن أي روابط صور داخل الرد
-                image_links = re.findall(r'(https?://\S+?\.(?:png|jpg|jpeg|gif))', answer)
+                # تنظيف الرد من الأكواد البرمجية قبل عرضه
+                final_text = clean_response(raw_answer)
                 
-                if image_links:
-                    for link in image_links:
-                        st.image(link, caption="تم توليدها بواسطة Gemini")
+                st.markdown(final_text)
+                st.caption(f"🤖 المحرك النشط: {used_model}")
                 
-                # عرض النص الأصلي (سواء كان وصفاً أو كوداً)
-                st.markdown(answer)
-                st.caption(f"🤖 المحرك: {used_model}")
-                
-                # النطق الصوتي
-                audio_fp = speak(answer)
+                # الرد الصوتي
+                audio_fp = speak(final_text)
                 if audio_fp: st.audio(audio_fp, autoplay=True)
                 
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
             else:
-                st.error(answer)
+                st.error(raw_answer)
