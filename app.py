@@ -8,101 +8,52 @@ from gtts import gTTS
 import io
 import re
 
-# 1. إعدادات الصفحة والبيئة
-st.set_page_config(page_title="مساعد مصعب المتكامل V3", layout="wide", page_icon="🌄")
+# 1. إعدادات الصفحة
+st.set_page_config(page_title="مساعد مصعب الذكي - نسخة الصور", layout="wide", page_icon="🖼️")
 load_dotenv()
 
-# 2. إعداد الاتصال بمفتاح الـ API
+# 2. إعداد المفتاح
 api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    st.error("❌ المفتاح غير موجود في ملف .env")
-    st.stop()
-
 genai.configure(api_key=api_key)
 
-# 3. دالة التوليد الذكية (تجاوز الأخطاء والتبديل التلقائي)
+# 3. دالة التوليد (الموديلات المتاحة في حسابك)
 def smart_generate(contents):
-    # القائمة المحدثة بناءً على حسابك في AI Studio لتجنب خطأ 404
-    models_to_try = [
-        "gemini-3-flash-preview",  # الموديل التجريبي الجديد
-        "gemini-2.0-flash-exp",    # الموديل البديل السريع
-        "gemini-1.5-flash"         # الموديل الاحتياطي المستقر
-    ]
-    
-    for model_name in models_to_try:
+    models = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash"]
+    for m in models:
         try:
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(m)
             response = model.generate_content(contents)
-            return response.text, model_name
-        except Exception as e:
-            # تخطي أخطاء الحصة (429) أو عدم وجود الموديل (404)
-            if "404" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                continue 
-            else:
-                return f"⚠️ خطأ تقني: {e}", None
-    return "🚫 عذراً، جميع المحركات غير متاحة حالياً.", None
+            return response.text, m
+        except:
+            continue
+    return "🚫 خطأ في الاتصال.", None
 
-# 4. دالة معالجة الرد (لتحويل أكواد JSON إلى نصوص مفهومة)
-def clean_response(text):
-    # إذا حاول الموديل كتابة كود توليد صورة، نستخرج الوصف فقط
-    if '"prompt":' in text:
-        match = re.search(r'"prompt":\s*"([^"]+)"', text)
-        if match:
-            return f"🎨 **طلب توليد صورة:** {match.group(1)}"
-    
-    # تنظيف النصوص من الروابط الطويلة أو الأكواد المزعجة
-    clean_text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
-    return clean_text if clean_text.strip() else text
-
-# 5. دالة النطق الصوتي
-def speak(text):
-    try:
-        clean_for_audio = re.sub(r'[*#_]', '', text[:250])
-        tts = gTTS(text=clean_for_audio, lang='ar')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        return fp
-    except:
-        return None
-
-# 6. واجهة التطبيق (القائمة الجانبية)
-with st.sidebar:
-    st.header("🎨 أدوات التحكم")
-    st.subheader("🎙️ تسجيل صوتي")
-    audio_record = mic_recorder(start_prompt="تحدث الآن 🎤", stop_prompt="إرسال 📤", key='recorder')
-    
-    st.divider()
-    st.subheader("🖼️ تحليل الصور")
-    uploaded_file = st.file_uploader("ارفع صورة لنحللها:", type=["jpg", "png", "jpeg"])
-    
-    if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
-
-# 7. الواجهة الرئيسية وعرض المحادثة
+# --- الواجهة ---
 st.title("⚡ مساعد مصعب المتكامل")
-st.info("تم تحديث الموديلات لتعمل مع Gemini 3 Preview ومعالجة الأكواد تلقائياً.")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+with st.sidebar:
+    audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
+    uploaded_file = st.file_uploader("ارفع صورة:", type=["jpg", "png", "jpeg"])
+
+# عرض المحادثة
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # استقبال المدخلات
-user_input = st.chat_input("اكتب سؤالك أو اطلب صورة...")
+user_input = st.chat_input("اطلب رسم صورة أو اسأل سؤالاً...")
 current_audio = audio_record['bytes'] if audio_record else None
 
 if user_input or current_audio or uploaded_file:
-    prompt = user_input if user_input else "حلل المحتوى المرفق"
-    
+    prompt = user_input if user_input else "حلل هذا"
     with st.chat_message("user"):
         st.markdown(prompt)
-        if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        with st.spinner("جاري التفكير والتبديل بين المحركات..."):
+        with st.spinner("جاري التوليد..."):
             content_list = [prompt]
             if uploaded_file: content_list.append(Image.open(uploaded_file))
             if current_audio: content_list.append({"mime_type": "audio/wav", "data": current_audio})
@@ -110,16 +61,26 @@ if user_input or current_audio or uploaded_file:
             raw_answer, used_model = smart_generate(content_list)
             
             if used_model:
-                # تنظيف الرد من الأكواد البرمجية قبل عرضه
-                final_text = clean_response(raw_answer)
+                # --- السحر هنا: البحث عن رابط الصورة وعرضه فوراً ---
+                # هذا الجزء يبحث عن أي رابط يبدأ بـ http وينتهي بصيغة صورة
+                img_match = re.search(r'(https?://\S+?\.(?:png|jpg|jpeg|gif))', raw_answer)
                 
-                st.markdown(final_text)
-                st.caption(f"🤖 المحرك النشط: {used_model}")
+                if img_match:
+                    image_url = img_match.group(1)
+                    st.image(image_url, caption="تم توليد الصورة بنجاح!")
+                
+                # تنظيف النص من أكواد الـ JSON المزعجة للعرض فقط
+                clean_text = re.sub(r'\{.*?\}', '🎨 جاري معالجة طلب الصورة...', raw_answer, flags=re.DOTALL)
+                
+                st.markdown(clean_text)
+                st.caption(f"🤖 المحرك: {used_model}")
                 
                 # الرد الصوتي
-                audio_fp = speak(final_text)
-                if audio_fp: st.audio(audio_fp, autoplay=True)
+                try:
+                    tts = gTTS(text=clean_text[:200], lang='ar')
+                    fp = io.BytesIO()
+                    tts.write_to_fp(fp)
+                    st.audio(fp, autoplay=True)
+                except: pass
                 
-                st.session_state.messages.append({"role": "assistant", "content": final_text})
-            else:
-                st.error(raw_answer)
+                st.session_state.messages.append({"role": "assistant", "content": clean_text})
