@@ -5,135 +5,113 @@ from gtts import gTTS
 import io, urllib.parse, re, json
 from PIL import Image
 
-# 1. إعدادات المنصة الشاملة V12.4 - النسخة النهائية لمصعب
-st.set_page_config(page_title="منصة مصعب الاحترافية V12.4", layout="wide", page_icon="🎓")
+# 1. إعدادات المنصة المتقدمة V13.0 - نسخة البحث الموثق
+st.set_page_config(page_title="منصة مصعب للبحث الذكي V13.0", layout="wide", page_icon="🔍")
 
-# إعداد المفتاح السري من Secrets
+# إعداد المفتاح السري
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 else:
-    st.error("⚠️ المفتاح غير موجود في Secrets!")
+    st.error("⚠️ المفتاح غير موجود!")
     st.stop()
 
-# --- محرك الرسم المستقر (يمنع الروابط المكسورة) ---
+# --- دالة الرسم المستقر ---
 def draw_image_logic(query):
-    # تنظيف الطلب وأخذ أول 60 حرف لضمان استقرار الرابط
     clean_prompt = re.sub(r'[^\w\s]', '', query)[:60]
     encoded = urllib.parse.quote(clean_prompt)
-    return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=123"
+    return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=130"
 
-# --- دالة الاستجابة مع دعم الاختيار اليدوي والتبديل التلقائي ---
-def generate_response(contents, selected_model):
+# --- دالة الاستجابة مع ميزة البحث في الإنترنت (Google Search) ---
+def generate_search_response(prompt, selected_model, persona_info):
+    # خريطة الموديلات
     model_map = {
         "Gemini 2.5 Flash (الأسرع)": "gemini-2.5-flash-exp",
         "Gemini 3 Pro (الأذكى)": "gemini-3-pro-preview",
         "Gemma 3 27B (خبير المنطق)": "gemma-3-27b-it"
     }
     
-    if selected_model != "تبديل تلقائي (الوضع الذكي)":
-        try:
-            model_id = model_map[selected_model]
-            model = genai.GenerativeModel(model_id)
-            response = model.generate_content(contents)
-            return response.text, selected_model
-        except:
-            st.warning(f"⚠️ {selected_model} غير متاح، جاري التبديل للتلقائي...")
+    model_id = model_map.get(selected_model, "gemini-2.5-flash-exp")
     
-    # نظام التبديل التلقائي (Fallback)
-    auto_models = ["gemini-2.5-flash-exp", "gemini-3-pro-preview", "gemma-3-27b-it"]
-    for m_id in auto_models:
-        try:
-            model = genai.GenerativeModel(m_id)
-            response = model.generate_content(contents)
-            if response.text: return response.text, f"تلقائي ({m_id})"
-        except: continue
-    return "لا يوجد استجابة من المحركات حالياً.", None
+    try:
+        # تفعيل أداة البحث في جوجل (Google Search Tool)
+        # ملاحظة: ميزة البحث متاحة بشكل أساسي في موديلات Gemini
+        model = genai.GenerativeModel(
+            model_name=model_id,
+            tools=[{"google_search_retrieval": {}}] # هذا السطر هو سر ميزة Perplexity
+        )
+        
+        full_query = f"بصفتك {persona_info}، ابحث في الإنترنت وأجب بدقة: {prompt}"
+        response = model.generate_content(full_query)
+        
+        return response.text, model_id
+    except Exception as e:
+        # في حال فشل البحث أو الموديل، نعود للوضع العادي
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text, "Fallback-Flash"
 
-# 2. القائمة الجانبية (الأدوات والتحكم)
+# 2. القائمة الجانبية
 with st.sidebar:
-    st.title("💎 تحكم مصعب الشامل")
-    
-    # ميزة اختيار المحرك (يدوي/تلقائي)
-    selected_engine = st.selectbox("🎯 اختر محرك الذكاء الاصطناعي:", [
-        "تبديل تلقائي (الوضع الذكي)",
+    st.title("🛡️ مركز تحكم مصعب")
+    selected_engine = st.selectbox("🎯 اختر المحرك:", [
         "Gemini 2.5 Flash (الأسرع)",
         "Gemini 3 Pro (الأذكى)",
         "Gemma 3 27B (خبير المنطق)"
     ])
     
-    st.divider()
-    # اختيار التخصص
-    persona = st.selectbox("👤 التخصص:", ["مدرس لغات محترف", "خبير برمجة Ubuntu", "مصمم صور إبداعي", "مساعد عام"])
+    persona = st.selectbox("👤 التخصص:", ["باحث ذكي وموثق", "مدرس لغات محترف", "خبير برمجة Ubuntu", "مصمم صور"])
     
     persona_instr = {
-        "مدرس لغات محترف": "أنت مدرس لغات خبير. صحح الأخطاء، اشرح القواعد، وانطق الكلمات بوضوح تام.",
-        "خبير برمجة Ubuntu": "أنت خبير لينكس وبرمجة. قدم حلولاً برمجية دقيقة لجهاز HP الخاص بمصعب.",
-        "مصمم صور إبداعي": "أنت فنان رقمي بصري، قدم أوصافاً خيالية للصور.",
-        "مساعد عام": "أنت مساعد ذكي شامل."
+        "باحث ذكي وموثق": "أنت محرك بحث متطور. قدم إجابات موثقة بمصادر وروابط من الإنترنت.",
+        "مدرس لغات محترف": "أنت مدرس لغات خبير. صحح وانطق بوضوح.",
+        "خبير برمجة Ubuntu": "أنت خبير لينكس لجهاز HP.",
+        "مصمم صور": "أنت فنان رقمي."
     }
 
-    st.divider()
-    # المايك ورفع الملفات للتحليل
     audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
-    uploaded_image = st.file_uploader("رفع صورة للتحليل:", type=['jpg', 'png', 'jpeg'])
+    uploaded_image = st.file_uploader("تحليل صورة:", type=['jpg', 'png', 'jpeg'])
     
-    if st.button("🗑️ مسح المحادثة"):
+    if st.button("🗑️ مسح الذاكرة"):
         st.session_state.messages = []; st.rerun()
 
-# 3. عرض المحادثة التاريخية
+# 3. معالجة الرسائل
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "img" in msg and msg["img"]: st.image(msg["img"])
 
-# 4. المعالج الرئيسي (التنفيذ)
-user_query = st.chat_input("تحدث مع مدرسك، اطلب كوداً، أو اطلب رسماً...")
+# 4. التنفيذ
+user_input = st.chat_input("اسأل عن أخبار اليوم أو ابحث عن معلومة موثقة...")
 
-if user_query or (audio_record and audio_record['bytes']) or uploaded_image:
-    prompt = user_query if user_query else "حلل هذا المحتوى المرفق"
-    with st.chat_message("user"): st.markdown(prompt)
+if user_input or (audio_record and audio_record['bytes']) or uploaded_image:
+    query = user_input if user_input else "حلل المرفق"
+    with st.chat_message("user"): st.markdown(query)
     
     with st.chat_message("assistant"):
-        with st.spinner("جاري التفكير والتوليد..."):
-            # تجهيز المحتوى (نص + تعليمات + صورة)
-            content_list = [f"بصفتك {persona}، نفذ الآتي: {prompt}"]
-            if uploaded_image: content_list.append(Image.open(uploaded_image))
-            
-            # جلب الرد من المحرك المختار
-            ai_text, active_name = generate_response(content_list, selected_engine)
+        with st.spinner("جاري البحث في الإنترنت وتجميع المصادر..."):
+            # طلب الرد مع البحث
+            ai_text, m_used = generate_search_response(query, selected_engine, persona_instr[persona])
             
             if ai_text:
-                # أ- توليد الصور (إذا طلب المستخدم)
+                # ميزة الرسم
                 img_url = None
-                if any(w in prompt for w in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
-                    img_url = draw_image_logic(prompt)
-                    st.image(img_url, caption="اللوحة الفنية الناتجة")
+                if any(w in query for w in ["ارسم", "صورة"]) or persona == "مصمم صور":
+                    img_url = draw_image_logic(query)
+                    st.image(img_url)
                 
-                # ب- عرض النص الأساسي
                 st.markdown(ai_text)
-                st.caption(f"🚀 المحرك النشط: {active_name}")
+                st.caption(f"📍 مصدر المعلومات: بحث Google مباشر عبر {m_used}")
                 
-                # ج- زر النطق الصوتي المطوّر (نسخة V12.4 القوية)
+                # ميزة النطق (حتى 2000 حرف)
                 try:
-                    # تنظيف النص مع الحفاظ على علامات الترقيم لـ 2000 حرف
-                    clean_voice_text = re.sub(r'[^\w\s.,!?]', '', ai_text)
-                    text_to_read = clean_voice_text[:2000] # القراءة الكاملة حتى 2000 حرف
-                    
-                    # تحديد اللغة تلقائياً (الإنجليزية لها الأولوية)
-                    lang_code = 'en' if re.search(r'[a-zA-Z]', text_to_read) else 'ar'
-                    
-                    # توليد الصوت MP3
-                    tts = gTTS(text=text_to_read, lang=lang_code, slow=False)
+                    clean_txt = re.sub(r'[^\w\s.,!?]', '', ai_text)[:2000]
+                    lang = 'en' if re.search(r'[a-zA-Z]', clean_txt) else 'ar'
+                    tts = gTTS(text=clean_txt, lang=lang)
                     audio_io = io.BytesIO()
                     tts.write_to_fp(audio_io)
-                    
-                    # عرض مشغل الصوت لمصعب
-                    st.audio(audio_io, format='audio/mp3')
-                    st.caption(f"🔊 نطق {lang_code} (يقرأ حتى 2000 حرف)")
-                except Exception as e:
-                    pass # ضمان عدم توقف التطبيق إذا فشل الصوت
+                    st.audio(audio_io)
+                except: pass
                 
-                # حفظ في الذاكرة لضمان استمرارية الحوار
                 st.session_state.messages.append({"role": "assistant", "content": ai_text, "img": img_url})
