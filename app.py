@@ -1,88 +1,115 @@
 import streamlit as st
 import google.generativeai as genai
 from streamlit_mic_recorder import mic_recorder
-import io, urllib.parse, re, json, os
+from gtts import gTTS
+import io, urllib.parse, re, json
 from PIL import Image
 
-# 1. الإعدادات والاتصال
-st.set_page_config(page_title="منصة مصعب الشاملة V11.5", layout="wide", page_icon="💎")
+# 1. إعدادات المنصة V12.0 (التحكم الكامل)
+st.set_page_config(page_title="منصة مصعب الاحترافية V12.0", layout="wide", page_icon="⚙️")
 
+# إعداد المفتاح السري
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 else:
-    st.error("⚠️ المفتاح ناقص في Secrets!")
+    st.error("⚠️ المفتاح غير موجود في Secrets!")
     st.stop()
 
-# دالة الرسم (تستخدم الطلب المختصر لضمان عدم كسر الرابط)
-def draw_image(user_query):
-    # تنظيف الطلب: نأخذ الكلمات فقط ونحذف الرموز
-    clean_query = re.sub(r'[^\w\s]', '', user_query)[:100]
-    encoded = urllib.parse.quote(clean_query)
-    return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=42"
+# --- محرك الرسم المستقر ---
+def draw_image_logic(query):
+    clean_prompt = re.sub(r'[^\w\s]', '', query)[:60]
+    encoded = urllib.parse.quote(clean_prompt)
+    return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=123"
 
-# 2. التبديل التلقائي بين المحركات
-def generate_smart_response(contents):
-    model_hierarchy = ["gemini-3-pro-preview", "gemma-3-27b-it", "gemini-2.5-flash-exp"]
-    for m_name in model_hierarchy:
-        try:
-            model = genai.GenerativeModel(m_name)
-            response = model.generate_content(contents)
-            if response and response.text:
-                return response.text, m_name
-        except: continue
-    return None, None
-
-# 3. الواجهة الجانبية (Sidebar)
-with st.sidebar:
-    st.header("⚙️ إعدادات V11.5")
-    persona = st.selectbox("اختر التخصص:", ["مساعد ذكي عام", "خبير برمجة وتطوير", "مدرس لغات محترف", "مصمم صور إبداعي"])
-    
-    persona_instr = {
-        "خبير برمجة وتطوير": "أنت خبير Ubuntu. قدم كوداً مشروحاً.",
-        "مدرس لغات محترف": "أنت مدرس لغات. صحح الأخطاء واشرح القواعد.",
-        "مصمم صور إبداعي": "أنت فنان رقمي. ركز على الوصف الجمالي.",
-        "مساعد ذكي عام": "أنت مساعد شامل."
+# --- دالة الاستجابة مع دعم الاختيار اليدوي ---
+def generate_response(contents, selected_model):
+    # خريطة الأسماء التقنية للموديلات
+    model_map = {
+        "Gemini 2.5 Flash (الأسرع)": "gemini-2.5-flash-exp",
+        "Gemini 3 Pro (الأذكى)": "gemini-3-pro-preview",
+        "Gemma 3 27B (خبير المنطق)": "gemma-3-27b-it"
     }
     
+    # إذا اختار المستخدم موديل معين يدوياً
+    if selected_model != "تبديل تلقائي (الوضع الذكي)":
+        try:
+            model_id = model_map[selected_model]
+            model = genai.GenerativeModel(model_id)
+            response = model.generate_content(contents)
+            return response.text, selected_model
+        except Exception as e:
+            st.warning(f"⚠️ المحرك {selected_model} غير متاح حالياً. جاري التبديل للتلقائي...")
+    
+    # نظام التبديل التلقائي (Fallback)
+    auto_models = ["gemini-2.5-flash-exp", "gemini-3-pro-preview", "gemma-3-27b-it"]
+    for m_id in auto_models:
+        try:
+            model = genai.GenerativeModel(m_id)
+            response = model.generate_content(contents)
+            if response.text: return response.text, f"تلقائي ({m_id})"
+        except: continue
+    return "عذراً، لا يوجد محرك يستجيب حالياً.", None
+
+# 2. القائمة الجانبية (الأدوات والاختيارات)
+with st.sidebar:
+    st.title("💎 تحكم مصعب الكامل")
+    
+    # --- إضافة ميزة اختيار المحرك يدوياً ---
+    selected_engine = st.selectbox("🎯 اختر محرك الذكاء الاصطناعي:", [
+        "تبديل تلقائي (الوضع الذكي)",
+        "Gemini 2.5 Flash (الأسرع)",
+        "Gemini 3 Pro (الأذكى)",
+        "Gemma 3 27B (خبير المنطق)"
+    ])
+    
+    st.divider()
+    persona = st.selectbox("👤 التخصص:", ["مدرس لغات محترف", "خبير برمجة Ubuntu", "مصمم صور إبداعي", "مساعد عام"])
+    
+    st.divider()
     audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
-    uploaded_file = st.file_uploader("رفع صورة:", type=['jpg', 'png', 'jpeg'])
+    uploaded_image = st.file_uploader("رفع صورة:", type=['jpg', 'png', 'jpeg'])
     
     if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
+        st.session_state.messages = []; st.rerun()
 
-# 4. إدارة الرسائل
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
+# 3. عرض المحادثة
+if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if "img_url" in msg and msg["img_url"]:
-            st.image(msg["img_url"])
+        if "img" in msg and msg["img"]: st.image(msg["img"])
 
-# 5. التنفيذ (إصلاح مشكلة عدم ظهور الصورة)
-user_input = st.chat_input("اطلب ما تشاء من مصعب...")
+# 4. التنفيذ ومعالجة المدخلات
+user_query = st.chat_input("اكتب سؤالك هنا...")
 
-if user_input or audio_record or uploaded_file:
-    prompt = user_input if user_input else "تحليل المحتوى المرفق"
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
+if user_query or (audio_record and audio_record['bytes']) or uploaded_image:
+    prompt = user_query if user_query else "تحليل المرفقات"
+    with st.chat_message("user"): st.markdown(prompt)
+    
     with st.chat_message("assistant"):
-        with st.spinner("جاري التفكير والرسم..."):
-            contents = [f"تعليماتك: {persona_instr[persona]}\n\nطلب المستخدم: {prompt}"]
-            if uploaded_file: contents.append(Image.open(uploaded_file))
+        with st.spinner(f"جاري الاتصال بـ {selected_engine}..."):
+            # تجهيز الطلب
+            content_list = [f"أجب كـ {persona}: {prompt}"]
+            if uploaded_image: content_list.append(Image.open(uploaded_image))
             
-            raw_text, used_model = generate_smart_response(contents)
+            # جلب الرد بناءً على الاختيار اليدوي
+            ai_text, active_name = generate_response(content_list, selected_engine)
             
-            if raw_text:
+            if ai_text:
                 img_url = None
-                # الشرط الصحيح: نستخدم (prompt) الذي كتبه المستخدم للرسم وليس (raw_text)
-                if any(x in prompt for x in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
-                    img_url = draw_image(prompt) # هنا السر! نرسل طلبك المختصر وليس شرح Gemma الطويل
-                    st.image(img_url, caption=f"تم الرسم بواسطة {used_model}")
+                if any(w in prompt for w in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
+                    img_url = draw_image_logic(prompt)
+                    st.image(img_url, caption="اللوحة الفنية")
                 
-                st.markdown(raw_text)
-                st.session_state.messages.append({"role": "assistant", "content": raw_text, "img_url": img_url})
+                st.markdown(ai_text)
+                st.caption(f"🚀 المحرك المستخدم: {active_name}")
+                
+                # الرد الصوتي
+                try:
+                    tts = gTTS(text=ai_text[:200], lang='ar')
+                    audio_io = io.BytesIO(); tts.write_to_fp(audio_io)
+                    st.audio(audio_io)
+                except: pass
+                
+                st.session_state.messages.append({"role": "assistant", "content": ai_text, "img": img_url})
