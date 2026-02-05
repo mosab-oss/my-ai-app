@@ -4,3 +4,4 @@ streamlit-mic-recorder
 python-dotenv
 Pillow
 gTTS
+openai
