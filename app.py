@@ -47,7 +47,7 @@ with st.sidebar:
 
 # --- 3. الدوال المساعدة ---
 def clean_response(text):
-    return re.sub(r'<think>.*?</think>', '', text, flags=st.DOTALL).strip()
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 # --- 4. واجهة الدردشة ---
 if "messages" not in st.session_state:
