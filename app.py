@@ -10,7 +10,7 @@ from streamlit_mic_recorder import mic_recorder
 st.set_page_config(page_title="منصة مصعب v16.8", layout="wide", page_icon="🚀")
 
 # استخدام العنوان الظاهر في LM Studio لضمان الاتصال
-local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
+local_client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
 # ربط محركات جوجل
 api_key = st.secrets.get("GEMINI_API_KEY")
