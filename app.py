@@ -1,15 +1,15 @@
 import streamlit as st
 import google.generativeai as genai
 from openai import OpenAI
-import io, re
+import io, re, os
 from gtts import gTTS
 from PIL import Image
-from streamlit_mic_recorder import mic_recorder # استيراد الميكروفون
+from streamlit_mic_recorder import mic_recorder 
 
 # --- 1. الإعدادات والربط ---
 st.set_page_config(page_title="منصة مصعب v16.4", layout="wide", page_icon="🎤")
 
-# ربط المحرك المحلي
+# ربط المحرك المحلي (LM Studio)
 local_client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
 # ربط محركات جوجل
@@ -17,20 +17,19 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# --- 2. القائمة الجانبية (إضافة الميكروفون) ---
+# --- 2. القائمة الجانبية (مركز التحكم) ---
 with st.sidebar:
     st.header("🎮 مركز التحكم v16.4")
     
     engine_choice = st.selectbox(
         "🎯 اختر المحرك:",
-        ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1 (محلي)", "Gemma 3 27B"]
+        ["DeepSeek R1 (محلي)", "Gemini 2.5 Flash", "Gemini 3 Pro", "Gemma 3 27B"]
     )
     
-    persona = st.selectbox("👤 شخصية المساعد:", ["مدرس لغوي", "مساعد مبرمج", "محلل ذكي"])
+    persona = st.selectbox("👤 شخصية المساعد:", ["مدرس لغوي", "مساعد مبرمج", "وكيل تنفيذ ملفات"])
     
     st.divider()
     st.subheader("🎙️ الإدخال الصوتي")
-    # إضافة زر الميكروفون
     audio_record = mic_recorder(
         start_prompt="🎤 ابدأ التحدث",
         stop_prompt="🛑 توقف وأرسل",
@@ -45,9 +44,28 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- 3. الدوال المساعدة ---
+# --- 3. الدوال المساعدة (إصلاح DOTALL وإضافة الوكيل) ---
 def clean_response(text):
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    # استخدام re.DOTALL بدلاً من st.DOTALL لإصلاح الخطأ
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    
+    # ميزة الوكيل (Agent): البحث عن نمط حفظ الملفات
+    # النمط المطلوب: SAVE_FILE: filename.txt | content
+    file_pattern = r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*(.*)'
+    match = re.search(file_pattern, cleaned, flags=re.DOTALL)
+    
+    if match:
+        filename = match.group(1)
+        content = match.group(2)
+        try:
+            # تنفيذ عملية الكتابة على نظام أوبنتو
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return cleaned + f"\n\n--- \n ✅ **[نظام الوكيل]: تم إنشاء الملف `{filename}` بنجاح.**"
+        except Exception as e:
+            return cleaned + f"\n\n--- \n ❌ **[نظام الوكيل]: فشل الحفظ: {e}**"
+            
+    return cleaned
 
 # --- 4. واجهة الدردشة ---
 if "messages" not in st.session_state:
@@ -58,16 +76,15 @@ for msg in st.session_state.messages:
         st.markdown(clean_response(msg["content"]))
 
 # --- 5. معالجة المدخلات (نص أو صوت) ---
-prompt = st.chat_input("اكتب رسالتك هنا...")
+prompt = st.chat_input("تحدث مع وكيلك الذكي...")
 
-# إذا تم التسجيل عبر الميكروفون، نعتبره هو المدخل (Prompt)
-input_audio_bytes = None
 if audio_record:
     input_audio_bytes = audio_record['bytes']
-    prompt = "تحليل تسجيل صوتي" # نص افتراضي للتعامل مع الصوت
+    prompt = "تحليل تسجيل صوتي" 
+else:
+    input_audio_bytes = None
 
 if prompt or input_audio_bytes:
-    # إضافة رسالة المستخدم
     display_text = prompt if not input_audio_bytes else "🎤 [رسالة صوتية]"
     st.session_state.messages.append({"role": "user", "content": display_text})
     
@@ -82,7 +99,7 @@ if prompt or input_audio_bytes:
         # أ. التعامل مع Gemini (يدعم الصوت والصور)
         if "Gemini" in engine_choice:
             try:
-                model_name = "gemini-1.5-flash-latest" if "Flash" in engine_choice else "gemini-3-pro-preview"
+                model_name = "gemini-1.5-flash-latest" if "Flash" in engine_choice else "gemini-1.5-pro"
                 model = genai.GenerativeModel(model_name)
                 
                 content_to_send = []
@@ -97,15 +114,17 @@ if prompt or input_audio_bytes:
             except Exception as e:
                 st.error(f"خطأ في Gemini: {e}")
 
-        # ب. التعامل مع DeepSeek المحلي (نصوص فقط حالياً)
+        # ب. التعامل مع DeepSeek المحلي (يدعم ميزة الوكيل)
         elif "DeepSeek" in engine_choice:
             if input_audio_bytes:
                 st.warning("DeepSeek المحلي لا يدعم تحليل الصوت مباشرة، يرجى استخدام Gemini للصوت.")
             else:
                 try:
+                    # توجيه الموديل لاستخدام ميزة حفظ الملفات
                     res = local_client.chat.completions.create(
-                        model="deepseek-r1-distill-qwen-7b",
-                        messages=[{"role": "system", "content": f"أنت {persona}"}, {"role": "user", "content": prompt}],
+                        model="deepseek-r1-distill-qwen-1.5b",
+                        messages=[{"role": "system", "content": f"أنت {persona}. للحفظ استخدم: SAVE_FILE: name.txt | content"}, 
+                                 {"role": "user", "content": prompt}],
                         stream=True
                     )
                     placeholder = st.empty()
@@ -113,10 +132,14 @@ if prompt or input_audio_bytes:
                         if chunk.choices[0].delta.content:
                             full_response += chunk.choices[0].delta.content
                             placeholder.markdown(full_response + "▌")
-                    placeholder.markdown(clean_response(full_response))
-                except: st.error("تأكد من تشغيل LM Studio!")
+                    
+                    processed_text = clean_response(full_response)
+                    placeholder.markdown(processed_text)
+                    full_response = processed_text
+                except: 
+                    st.error("تأكد من تشغيل LM Studio والضغط على Start Server!")
 
-        # ج. الرد الصوتي التلقائي (الذكاء يتحدث إليك)
+        # ج. الرد الصوتي التلقائي
         if full_response:
             try:
                 clean_text = clean_response(full_response)
