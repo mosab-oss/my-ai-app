@@ -9,7 +9,7 @@ from streamlit_mic_recorder import mic_recorder
 # --- 1. الإعدادات والربط ---
 st.set_page_config(page_title="منصة مصعب v16.5 الشاملة", layout="wide", page_icon="🎤")
 
-# ربط المحرك المحلي
+# ربط المحرك المحلي - استخدام 127.0.0.1 لضمان الاتصال في أوبنتو
 local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
 
 # ربط محركات جوجل
@@ -39,7 +39,7 @@ with st.sidebar:
 
 # --- 3. الدوال المساعدة (دالة الوكيل المحدثة) ---
 def clean_response(text):
-    # تنظيف وسوم التفكير
+    # تنظيف وسوم التفكير باستخدام re.DOTALL لضمان شمول الأسطر المتعددة
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
     # ميزة الوكيل: البحث عن نمط الحفظ والتشغيل
@@ -53,7 +53,7 @@ def clean_response(text):
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            # التشغيل التلقائي إذا كان ملف بايثون
+            # التشغيل التلقائي عبر subprocess إذا كان ملف بايثون
             if filename.endswith('.py'):
                 result = subprocess.run(['python3', filename], capture_output=True, text=True, timeout=5)
                 output = result.stdout if result.stdout else result.stderr
@@ -86,7 +86,7 @@ if prompt or input_audio_bytes:
     with st.chat_message("assistant"):
         full_response = ""
         
-        # أ. التعامل مع Gemini (استرجاع الميزة المفقودة)
+        # أ. التعامل مع Gemini (استرجاع الميزة المفقودة ودعم الصور/الصوت)
         if "Gemini" in engine_choice:
             try:
                 model_name = "gemini-1.5-flash-latest" if "Flash" in engine_choice else "gemini-1.5-pro"
@@ -107,7 +107,7 @@ if prompt or input_audio_bytes:
             try:
                 res = local_client.chat.completions.create(
                     model="deepseek-r1-distill-qwen-1.5b",
-                    messages=[{"role": "system", "content": f"أنت {persona}. للحفظ والتشغيل استخدم: SAVE_FILE: name.py | content"}, 
+                    messages=[{"role": "system", "content": f"أنت {persona}. للحفظ والتشغيل استخدم صيغة: SAVE_FILE: name.py | content"}, 
                              {"role": "user", "content": prompt}],
                     stream=True
                 )
@@ -120,12 +120,13 @@ if prompt or input_audio_bytes:
                 full_response = clean_response(full_response)
                 placeholder.markdown(full_response)
             except:
-                st.error("تأكد من تشغيل LM Studio!")
+                st.error("تأكد من تشغيل LM Studio على البورت 1234!")
 
-        # ج. الرد الصوتي (استرجاع الميزة المفقودة)
+        # ج. الرد الصوتي التلقائي (استرجاع الميزة المفقودة)
         if full_response:
             try:
-                tts_text = re.sub(r'```.*?```', '', full_response, flags=re.DOTALL) # عدم قراءة الكود برمجياً
+                # تنظيف النص من الأكواد قبل النطق لضمان جودة الصوت
+                tts_text = re.sub(r'```.*?```', '', full_response, flags=re.DOTALL)
                 tts = gTTS(text=tts_text[:300], lang='ar')
                 audio_io = io.BytesIO()
                 tts.write_to_fp(audio_io)
