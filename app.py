@@ -6,10 +6,10 @@ from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder 
 
-# --- 1. الإعدادات والربط ---
-st.set_page_config(page_title="منصة مصعب v16.8 الشاملة", layout="wide", page_icon="🚀")
+# --- 1. الإعدادات والربط (مطابق لصورتك الأخيرة) ---
+st.set_page_config(page_title="منصة مصعب v16.8", layout="wide", page_icon="🚀")
 
-# ربط المحرك المحلي (LM Studio)
+# استخدام العنوان الظاهر في LM Studio لضمان الاتصال
 local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
 
 # ربط محركات جوجل
@@ -17,19 +17,16 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# --- 2. القائمة الجانبية (مركز التحكم) ---
+# --- 2. القائمة الجانبية ---
 with st.sidebar:
     st.header("🎮 مركز التحكم v16.8")
     engine_choice = st.selectbox(
         "🎯 اختر المحرك:",
         ["DeepSeek R1 (محلي)", "Gemini 2.5 Flash", "Gemini 3 Pro", "Gemma 3 27B"]
     )
-    
-    # استرجاع سطر الشخصية المفقود
-    persona = st.selectbox("👤 شخصية المساعد:", ["وكيل تنفيذ ملفات", "مساعد مبرمج", "محلل بيانات", "مدرس لغوي"])
+    persona = st.selectbox("👤 شخصية المساعد:", ["وكيل تنفيذ ملفات", "مساعد مبرمج", "محلل بيانات"])
     
     st.divider()
-    # ميزة رفع الملفات المتنوعة
     uploaded_file = st.file_uploader("📂 ارفع ملف (PDF, CSV, TXT, Image):", 
                                    type=["pdf", "csv", "txt", "jpg", "png", "jpeg"])
     
@@ -40,12 +37,12 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- 3. دالة الوكيل (التنظيف والتنفيذ) ---
+# --- 3. دالة الوكيل الذكي ---
 def clean_and_execute(text):
-    # مسح أفكار الموديل (تفكير DeepSeek)
+    # تنظيف وسوم التفكير
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
-    # البحث عن نمط الحفظ: SAVE_FILE: name.py | content
+    # البحث عن نمط الحفظ
     file_pattern = r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*(.*)'
     match = re.search(file_pattern, cleaned, flags=re.DOTALL)
     
@@ -54,8 +51,6 @@ def clean_and_execute(text):
         try:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(content)
-            
-            # التشغيل التلقائي إذا كان الملف بايثون
             if filename.endswith('.py'):
                 res = subprocess.run(['python3', filename], capture_output=True, text=True, timeout=5)
                 output = res.stdout if res.stdout else res.stderr
@@ -73,12 +68,12 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- 5. المعالجة الذكية للمدخلات ---
-prompt = st.chat_input("تحدث مع نظامك المتكامل...")
+# --- 5. المعالجة ---
+prompt = st.chat_input("تحدث مع نظامك...")
 input_audio = audio_record['bytes'] if audio_record else None
 
 if prompt or input_audio or uploaded_file:
-    user_txt = prompt if prompt else "📂 [تحليل ملف/وسائط]"
+    user_txt = prompt if prompt else "📂 [إدخال وسائط]"
     st.session_state.messages.append({"role": "user", "content": user_txt})
     with st.chat_message("user"):
         st.markdown(user_txt)
@@ -86,53 +81,42 @@ if prompt or input_audio or uploaded_file:
     with st.chat_message("assistant"):
         full_res = ""
         
-        # أ. معالجة محركات جوجل (Gemini & Gemma)
-        if any(name in engine_choice for name in ["Gemini", "Gemma"]):
+        if "DeepSeek" in engine_choice:
+            try:
+                # اسم الموديل مطابق تماماً لصورتك
+                res = local_client.chat.completions.create(
+                    model="deepseek-r1-distill-qwen-1.5b",
+                    messages=[{"role": "system", "content": f"أنت {persona}. للحفظ استخدم: SAVE_FILE: name.py | content"},
+                             {"role": "user", "content": prompt}],
+                    stream=True
+                )
+                placeholder = st.empty()
+                for chunk in res:
+                    if chunk.choices[0].delta.content:
+                        full_res += chunk.choices[0].delta.content
+                        placeholder.markdown(full_res + "▌")
+                full_res = clean_and_execute(full_res)
+                placeholder.markdown(full_res)
+            except Exception as e:
+                st.error(f"خطأ في الاتصال: {e}")
+
+        elif any(name in engine_choice for name in ["Gemini", "Gemma"]):
             try:
                 model_map = {"Gemini 2.5 Flash": "gemini-1.5-flash", "Gemini 3 Pro": "gemini-1.5-pro", "Gemma 3 27B": "gemma-2-27b"}
                 model = genai.GenerativeModel(model_map.get(engine_choice, "gemini-1.5-flash"))
-                parts = []
-                if prompt: parts.append(f"بصفتك {persona}: {prompt}")
-                
+                parts = [f"بصفتك {persona}: " + (prompt if prompt else "حلل المرفق")]
                 if uploaded_file:
-                    if uploaded_file.type.startswith("image"):
-                        parts.append(Image.open(uploaded_file))
-                    else:
-                        file_content = uploaded_file.read().decode("utf-8", errors="ignore")
-                        parts.append(f"\nمحتوى الملف المرفوع:\n{file_content}")
-                
+                    if uploaded_file.type.startswith("image"): parts.append(Image.open(uploaded_file))
+                    else: parts.append(uploaded_file.read().decode("utf-8", errors="ignore"))
                 if input_audio: parts.append({'mime_type': 'audio/wav', 'data': input_audio})
                 
                 response = model.generate_content(parts)
                 full_res = response.text
                 st.markdown(full_res)
-            except Exception as e:
-                st.error(f"خطأ في محرك جوجل: {e}")
+            except Exception as e: st.error(f"خطأ Gemini: {e}")
 
-        # ب. معالجة DeepSeek المحلي (LM Studio)
-        elif "DeepSeek" in engine_choice:
-            try:
-                stream = local_client.chat.completions.create(
-                    model="deepseek-r1-distill-qwen-1.5b",
-                    messages=[{"role": "system", "content": f"أنت {persona}. عند طلب حفظ ملف استخدم: SAVE_FILE: name.py | content"},
-                             {"role": "user", "content": prompt}],
-                    stream=True
-                )
-                placeholder = st.empty()
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        full_res += chunk.choices[0].delta.content
-                        placeholder.markdown(full_res + "▌")
-                
-                full_res = clean_and_execute(full_res)
-                placeholder.markdown(full_res)
-            except:
-                st.error("تأكد من تشغيل LM Studio على البورت 1234!")
-
-        # ج. تحويل النص إلى صوت (النطق التلقائي)
         if full_res:
             try:
-                # تنظيف النص من الأكواد قبل النطق
                 audio_text = re.sub(r'```.*?```', '', full_res, flags=re.DOTALL)
                 tts = gTTS(text=audio_text[:250], lang='ar')
                 fp = io.BytesIO()
