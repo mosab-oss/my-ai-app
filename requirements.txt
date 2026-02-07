@@ -1,7 +1,8 @@
- google-generativeai
+google-generativeai
 streamlit
 streamlit-mic-recorder
 python-dotenv
 Pillow
 gTTS
 openai
+google-genai
