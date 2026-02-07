@@ -57,7 +57,7 @@ with st.sidebar:
     st.divider()
     
     # د. المحرك ورفع الملفات
-    engine_choice = st.selectbox("🎯 المحرك:", ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1"])
+    engine_choice = st.selectbox("🎯 المحرك:",  ["Gemini 2.5 Flash", "Gemini 3 Pro", "Gemma 3 27B", "DeepSeek R1"])
     uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "csv", "txt", "jpg", "png", "jpeg"])
     
     st.divider()
