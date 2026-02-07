@@ -6,8 +6,8 @@ from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder 
 
-# --- 1. الإعدادات والواجهة (RTL) ---
-st.set_page_config(page_title="منصة مصعب v16.11.5", layout="wide", page_icon="⚙️")
+# --- 1. الإعدادات الأساسية (RTL) ---
+st.set_page_config(page_title="منصة مصعب v16.11.6", layout="wide", page_icon="🚀")
 
 st.markdown("""
     <style>
@@ -23,21 +23,28 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# --- 2. مركز التحكم المحدث بالكامل ---
+# --- 2. مركز التحكم (القائمة الجانبية الكاملة) ---
 with st.sidebar:
-    st.header("🎮 مركز التحكم v16.11.5")
+    st.header("🎮 مركز التحكم v16.11.6")
     
+    # 1. اختيار المحرك
     engine_choice = st.selectbox(
         "🎯 اختر المحرك:",
         ["Gemini 2.5 Flash", "Gemini 3 Pro", "Gemma 3 27B", "DeepSeek R1 (محلي)"]
     )
     
+    # 2. المغرفون وبقية الخبراء (تأكدت من الاسم هنا)
     persona = st.selectbox(
         "👤 اختر الخبير المطلوب:", 
-        ["المغرفون (خبير المعرفة العام)", "خبير اللغات والترجمة", "وكيل تنفيذ ملفات", "مساعد مبرمج محترف"]
+        [
+            "المغرفون (خبير المعرفة العام)", 
+            "خبير اللغات والترجمة", 
+            "وكيل تنفيذ ملفات", 
+            "مساعد مبرمج محترف"
+        ]
     )
 
-    # استعادة مستوى التفكير
+    # 3. مستوى التفكير (الذي سألت عنه)
     thinking_level = st.select_slider(
         "🧠 مستوى التفكير (Thinking):", 
         options=["Low", "Medium", "High"], 
@@ -45,14 +52,16 @@ with st.sidebar:
     )
     
     st.divider()
+    
+    # 4. رفع الملفات
     uploaded_file = st.file_uploader("📂 ارفع ملفك:", type=["pdf", "csv", "txt", "jpg", "png", "jpeg"])
     
-    # استعادة زر فحص الموديلات
+    # 5. أدوات الصيانة (فحص الموديلات)
     st.subheader("🛠️ أدوات الصيانة")
     if st.button("🔍 فحص الموديلات النشطة"):
         try:
             models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            st.info("الموديلات المتاحة حالياً:")
+            st.info("الموديلات المتاحة:")
             st.code("\n".join(models))
         except Exception as e: st.error(f"فشل الفحص: {e}")
 
@@ -60,7 +69,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- 3. الوكيل الذكي ---
+# --- 3. الوكيل الذكي (تنفيذ الأوامر) ---
 def clean_and_execute(text):
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     file_pattern = r'(?:SAVE_FILE:|save_file:)\s*([\w\.-]+)\s*(?:\||content=\{?)\s*(.*?)\s*\}?$'
@@ -82,7 +91,7 @@ if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-prompt = st.chat_input("تحدث مع المغرفون...")
+prompt = st.chat_input("تحدث مع المغرفون الآن...")
 
 if prompt or uploaded_file:
     user_txt = prompt if prompt else "📂 [تحليل مرفق]"
@@ -92,31 +101,34 @@ if prompt or uploaded_file:
     with st.chat_message("assistant"):
         full_res = ""
         system_instructions = {
-            "المغرفون (خبير المعرفة العام)": f"أنت خبير موسوعي بمستوى تفكير {thinking_level}. قدم إجابات معرفية عميقة وصوتية.",
+            "المغرفون (خبير المعرفة العام)": f"أنت خبير موسوعي متحدث بمستوى تفكير {thinking_level}.",
             "خبير اللغات والترجمة": f"أنت بروفيسور لغويات بمستوى {thinking_level}.",
             "وكيل تنفيذ ملفات": "أنت وكيل تقني لتنفيذ الأكواد.",
             "مساعد مبرمج محترف": "أنت مبرمج خبير."
         }
         
         try:
+            # استخدام المسميات الصحيحة من فحصك السابق
             model_map = {
                 "Gemini 3 Pro": "models/gemini-3-pro-preview", 
                 "Gemini 2.5 Flash": "models/gemini-2.5-flash", 
                 "Gemma 3 27B": "models/gemma-3-27b-it"
             }
-            model = genai.GenerativeModel(model_map.get(engine_choice, "models/gemini-2.5-flash"))
+            model_id = model_map.get(engine_choice, "models/gemini-2.5-flash")
+            model = genai.GenerativeModel(model_id)
             
+            # إرسال الطلب
             response = model.generate_content(f"{system_instructions.get(persona)}\n\n{user_txt}")
             full_res = clean_and_execute(response.text)
             st.markdown(full_res)
             
-            # ميزة التكلم (gTTS)
-            if persona == "المغرفون (خبير المعرفة العام)":
+            # تفعيل ميزة التكلم حصرياً لـ "المغرفون"
+            if "المغرفون" in persona:
                 clean_audio_text = re.sub(r'[*#`]', '', full_res)
-                tts = gTTS(text=clean_audio_text[:400], lang='ar')
+                tts = gTTS(text=clean_audio_text[:500], lang='ar')
                 audio_fp = io.BytesIO()
                 tts.write_to_fp(audio_fp)
                 st.audio(audio_fp, format='audio/mp3')
             
             st.session_state.messages.append({"role": "assistant", "content": full_res})
-        except Exception as e: st.error(f"خطأ: {e}")
+        except Exception as e: st.error(f"حدث خطأ: {e}")
