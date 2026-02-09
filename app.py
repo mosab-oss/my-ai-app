@@ -3,84 +3,84 @@ from google import genai
 from google.genai import types
 import pandas as pd
 import io
+from PIL import Image
+import PyPDF2
 
-# --- 1. إعدادات الهوية والواجهة (تصحيح الخطأ السابق) ---
-st.set_page_config(page_title="التحالف الفائق v19", layout="wide", page_icon="🔱")
+# --- 1. الإعدادات الأساسية للنسخة v16.12.0 ---
+st.set_page_config(page_title="التحالف v16.12.0", layout="wide", page_icon="⚡")
 
+# تصميم الواجهة الاحترافي والهادئ
 st.markdown("""
     <style>
-    .stApp { background-color: #050a10; color: #e0e0e0; }
-    .main-header { font-size: 35px; color: #00d4ff; text-align: center; text-shadow: 0 0 10px #00d4ff; }
-    .brain-card { background: rgba(0, 212, 255, 0.05); border: 1px solid #00d4ff; padding: 15px; border-radius: 15px; margin-bottom: 10px; }
+    .stApp { background-color: #0d1117; color: #c9d1d9; }
+    .status-box { padding: 10px; border-radius: 5px; border-left: 5px solid #238636; background: #161b22; }
+    .main-title { color: #58a6ff; text-align: center; font-size: 30px; font-weight: bold; }
     </style>
-    """, unsafe_allow_html=True) # تم التصحيح هنا من input إلى html
+    """, unsafe_allow_html=True)
 
-# --- 2. تعريف العقول والمولدات ---
-BRAINS = {
-    "المبرمج (DeepSeek)": "خبير الأكواد وتطوير الأنظمة.",
-    "المحلل (Gemini Pro)": "خبير قراءة الـ PDF والجداول الضخمة.",
-    "الخبير الأمني (Coder)": "خبير فك التشفير وحماية البيانات.",
-    "المخطط (Strategic)": "خبير وضع خطط العمل والمشاريع.",
-    "المبدع (Flash)": "خبير الصور والوسائط المتعددة.",
-    "المدقق (Qwen)": "خبير مراجعة الأخطاء والمنطق الصيني.",
-    "المتحدث (Orator)": "خبير التقارير النهائية والصوت."
-}
+# --- 2. وظائف المعالجة المركزية ---
+def process_document(file):
+    """معالجة ملفات PDF و Excel"""
+    if file.type == "application/pdf":
+        reader = PyPDF2.PdfReader(file)
+        return "\n".join([page.extract_text() for page in reader.pages])
+    elif file.name.endswith(('.csv', '.xlsx')):
+        df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
+        return df.to_string()
+    return ""
 
-# --- 3. الشريط الجانبي (غرفة التحكم) ---
+# --- 3. محرك Gemini v16.12.0 ---
+def call_gemini(prompt, file_data="", image=None):
+    # تأكد من وضع الـ API KEY الخاص بك في Secrets
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    contents = [f"سياق الملفات: {file_data}\n\nسؤال المستخدم: {prompt}"]
+    if image:
+        contents.append(image)
+        
+    response = client.models.generate_content(
+        model="gemini-2.0-flash", # المحرك الافتراضي للنسخة
+        contents=contents
+    )
+    return response.text
+
+# --- 4. واجهة المستخدم ---
+st.markdown('<p class="main-title">🛡️ نظام التحالف - الإصدار v16.12.0</p>', unsafe_allow_html=True)
+
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/144/shield.png", width=80)
-    st.title("🛡️ ترسانة التحالف")
-    
-    selected_brain = st.selectbox("🧠 اختر العقل القائد:", list(BRAINS.keys()))
-    
-    st.subheader("🚀 المحركات النشطة")
-    engine = st.selectbox("المحرك المولد:", [
-        "Gemini 2.0 Flash (سريع)", 
-        "Gemini 1.5 Pro (عميق)", 
-        "DeepSeek-V3 (برمجي)", 
-        "Qwen-Max (منطقي)"
-    ])
-    
-    uploaded_file = st.file_uploader("📂 ارفع ملف (PDF/Excel/Image)", type=['pdf', 'xlsx', 'png', 'jpg'])
+    st.header("⚙️ لوحة التحكم")
+    st.info("الحالة: مستقر ✅")
+    uploaded_file = st.file_uploader("إرفاق مستند أو صورة", type=['pdf', 'csv', 'xlsx', 'png', 'jpg'])
+    st.divider()
+    if st.button("🗑️ مسح الذاكرة"):
+        st.session_state.chat_history = []
+        st.rerun()
 
-# --- 4. الهيكل الرئيسي للبرنامج ---
-st.markdown('<p class="main-header">🔱 نظام السبع عقول والمولدات العالمية</p>', unsafe_allow_html=True)
+# سجل الدردشة
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# عرض حالة العقول
-cols = st.columns(7)
-for i, name in enumerate(BRAINS.keys()):
-    with cols[i]:
-        status = "🟢" if name == selected_brain else "⚪"
-        st.write(f"{status}\n{name.split()[0]}")
+for msg in st.session_state.chat_history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-st.divider()
-
-# سجل المحادثة
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# --- 5. منطق معالجة الطلبات ---
-if prompt := st.chat_input("أمرك مطاع يا مصعب..."):
-    # إضافة رسالة المستخدم
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# منطقة الإدخال
+if user_input := st.chat_input("تحدث مع التحالف..."):
+    st.session_state.chat_history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
 
-    # رد النظام (التحالف)
     with st.chat_message("assistant"):
-        with st.spinner(f"🔄 جاري تشغيل {selected_brain} عبر {engine}..."):
-            # محاكاة الرد (سيتم ربطه بـ API Keys الخاصة بك)
-            full_response = f"**تحليل {selected_brain}:**\n\nبناءً على المحرك {engine}، تم استلام طلبك. نحن الآن في وضع الاستعداد الكامل لمعالجة البيانات."
-            
-            if "برمج" in prompt or "كود" in prompt:
-                full_response += "\n\n```python\n# كود مولد بواسطة DeepSeek\nprint('التحالف يعمل بكفاءة')\n```"
-            
-            st.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-# --- 6. عرض تفاصيل العقل النشط ---
-st.info(f"💡 **مهمة العقل الحالي:** {BRAINS[selected_brain]}")
+        context = ""
+        img_obj = None
+        
+        if uploaded_file:
+            if uploaded_file.type.startswith('image'):
+                img_obj = Image.open(uploaded_file)
+            else:
+                context = process_document(uploaded_file)
+        
+        with st.spinner("جاري المعالجة..."):
+            answer = call_gemini(user_input, context, img_obj)
+            st.markdown(answer)
+            st.session_state.chat_history.append({"role": "assistant", "content": answer})
