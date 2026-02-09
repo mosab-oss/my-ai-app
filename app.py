@@ -27,7 +27,7 @@ MODELS_GRID = {
     "Gemini 2.5 Flash": "gemini-1.5-flash", # المسمى المستقر للنسخة 2.5
     "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
     "DeepSeek R1": "deepseek-reasoner",
-    "Gemma 3 27B": "gemma-3-27b",
+    "Gemma 3 27B": "gemma-3-27-it",
     "Ernie 5.0": "ernie-5.0",
     "Kimi Latest": "moonshot-v1-8k"
 }
