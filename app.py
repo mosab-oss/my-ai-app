@@ -1,72 +1,134 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+from openai import OpenAI  
+import io, re, os, subprocess, time, pandas as pd
+from gtts import gTTS
+from streamlit_mic_recorder import mic_recorder 
+from PIL import Image
+import PyPDF2 # مكتبة معالجة الـ PDF
 
-# --- 1. إعدادات الصفحة ---
-st.set_page_config(page_title="رادار مصعب الذكي", page_icon="📡", layout="wide")
+# --- 1. الإعدادات والسمات ---
+st.set_page_config(page_title="منصة مصعب v16.39.0", layout="wide", page_icon="🛡️")
 
-# إصلاح تنسيق الـ CSS (وضعناه في سطر واحد لتجنب خطأ التنسيق)
-st.markdown("<style>.stChatMessage { border-radius: 15px; }</style>", unsafe_allow_input=True)
+st.markdown("""
+    <style>
+    .stApp { direction: rtl; text-align: right; background-color: #0e1117; color: white; }
+    [data-testid="stSidebar"] { background-color: #000c18; border-left: 2px solid #00d4ff; }
+    .exec-box { background-color: #000; color: #00ffcc; padding: 15px; border-radius: 10px; border: 1px solid #00ffcc; font-family: monospace; }
+    .status-badge { background-color: #1a1a1a; color: #ffcc00; border: 1px solid #ffcc00; padding: 2px 10px; border-radius: 20px; font-size: 12px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 2. إدارة المفاتيح ---
-def get_keys():
-    keys = []
-    # جلب المفاتيح من Secrets
-    for i in range(1, 4):
-        k = st.secrets.get(f"GEMINI_KEY_{i}")
-        if k: keys.append(k)
-    return keys
+# جلب المفاتيح السرية
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY")
 
-API_KEYS = get_keys()
+# --- 2. محرك قراءة الملفات الذكي ---
+def process_uploaded_file(uploaded_file):
+    file_text = ""
+    if uploaded_file.type == "application/pdf":
+        pdf_reader = PyPDF2.PdfReader(uploaded_file)
+        for page in pdf_reader.pages:
+            file_text += page.extract_text() + "\n"
+        return f"\n[محتوى ملف PDF]:\n{file_text}"
+    elif uploaded_file.type in ["text/csv", "application/vnd.ms-excel"]:
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+        return f"\n[بيانات الملف]:\n{df.head(10).to_string()}" # نرسل أول 10 أسطر للذكاء الاصطناعي
+    return ""
 
-# --- 3. وظيفة جلب الرد من Gemini ---
-def get_ai_response(prompt):
-    if not API_KEYS:
-        return "❌ يرجى إضافة GEMINI_KEY_1 في إعدادات Secrets."
-
-    for key in API_KEYS:
+# --- 3. محرك التنفيذ وحفظ الملفات ---
+def run_execution_logic(text):
+    clean_txt = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    file_match = re.search(r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*content=\{(.*?)\}', text, flags=re.DOTALL)
+    exec_out = ""
+    if file_match:
+        fname, fcontent = file_match.group(1).strip(), file_match.group(2).strip()
+        fcontent = re.sub(r'```python|```', '', fcontent).strip()
         try:
-            client = genai.Client(api_key=key)
-            # تفعيل البحث المباشر لنتائج دقيقة (طقس، أخبار)
-            search_tool = types.Tool(google_search=types.GoogleSearch())
-            
-            config = types.GenerateContentConfig(
-                system_instruction="أنت مساعد ذكي لمصعب. استخدم البحث لتقديم معلومات دقيقة.",
-                tools=[search_tool]
-            )
+            with open(fname, 'w', encoding='utf-8') as f: f.write(fcontent)
+            if fname.endswith('.py'):
+                res = subprocess.run(['python3', fname], capture_output=True, text=True, timeout=10)
+                exec_out = f"🖥️ ناتج تنفيذ كود {fname}:\n{res.stdout}\n{res.stderr}"
+        except Exception as e: exec_out = f"❌ خطأ تنفيذ: {e}"
+    return clean_txt, exec_out
 
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config=config
-            )
-            return response.text
-        except Exception as e:
-            if "429" in str(e): # إذا انتهت الحصة جرب المفتاح التالي
-                continue
-            return f"⚠️ خطأ فني: {str(e)}"
+# --- 4. دالة التوجيه الشاملة ---
+def get_super_response(engine, user_input, persona, image=None, use_search=False, context_text=""):
+    client = genai.Client(api_key=GEMINI_KEY)
+    search_tool = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
     
-    return "😴 جميع المفاتيح استهلكت حصتها، عد لاحقاً."
+    # دمج سياق الملفات مع سؤال المستخدم
+    full_prompt = f"{user_input}\n{context_text}" if context_text else user_input
 
-# --- 4. واجهة المحادثة ---
-st.title("📡 رادار مصعب الذكي")
+    try:
+        contents = [full_prompt]
+        if image: contents.append(image)
+        config = types.GenerateContentConfig(
+            system_instruction=f"أنت {persona}. حلل البيانات المرفقة بدقة.",
+            tools=search_tool
+        )
+        # تصحيح مسمى الموديل لضمان العمل
+        target_model = engine if "gemini" in engine else "gemini-2.0-flash"
+        r = client.models.generate_content(model=target_model, contents=contents, config=config)
+        return r.text
+    except Exception as e:
+        return f"⚠️ عذراً مصعب، حدث خطأ: {str(e)}"
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --- 5. الواجهة الجانبية ---
+with st.sidebar:
+    st.title("🛡️ تحالف مصعب v16.39")
+    audio = mic_recorder(start_prompt="🎤 تحدث", stop_prompt="إرسال", key='v39_mic')
+    st.divider()
+    
+    engine_choice = st.selectbox(
+        "🎯 العقل المفكر:", 
+        ["gemini-2.0-flash", "gemini-2.0-pro-exp-02-05", "deepseek-r1"]
+    )
+    
+    persona = st.selectbox("👤 الشخصية:", ["محلل بيانات خبير", "مساعد مبرمج", "مدرس لغات"])
+    web_on = st.toggle("🌐 بحث إنترنت مباشر")
+    uploaded_file = st.file_uploader("📂 ارفع (Image, PDF, CSV):", type=['jpg', 'png', 'pdf', 'csv', 'xlsx'])
+    
+    if st.button("🗑️ مسح السجل", type="primary"):
+        st.session_state.messages = []; st.rerun()
 
-# عرض الرسائل
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+# --- 6. العرض والتنفيذ ---
+if "messages" not in st.session_state: st.session_state.messages = []
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]): st.markdown(m["content"])
 
-# إدخال المستخدم
-if user_input := st.chat_input("اسألني عن أي شيء..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+if prompt := st.chat_input("تحدث مع نظامك...") or audio:
+    txt = prompt if prompt else "🎤 [رسالة صوتية]"
+    st.session_state.messages.append({"role": "user", "content": txt})
+    with st.chat_message("user"): st.markdown(txt)
 
     with st.chat_message("assistant"):
-        with st.spinner("جاري التفكير والبحث..."):
-            response = get_ai_response(user_input)
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+        img_obj = None
+        context_text = ""
+        
+        # معالجة الملفات المرفوعة
+        if uploaded_file:
+            if uploaded_file.type.startswith('image'):
+                img_obj = Image.open(uploaded_file)
+                st.markdown('<span class="status-badge">👁️ تم رصد صورة...</span>', unsafe_allow_html=True)
+            else:
+                with st.spinner("⏳ جاري قراءة الملف واستخراج البيانات..."):
+                    context_text = process_uploaded_file(uploaded_file)
+                    st.markdown('<span class="status-badge">📄 تم تحليل مستند المرفق</span>', unsafe_allow_html=True)
+
+        with st.spinner("🧠 جاري التحليل والربط..."):
+            raw_res = get_super_response(engine_choice, txt, persona, img_obj, web_on, context_text)
+        
+        clean_res, code_res = run_execution_logic(raw_res)
+        st.markdown(clean_res)
+        
+        if code_res:
+            st.markdown(f'<div class="exec-box">{code_res}</div>', unsafe_allow_html=True)
+        
+        # تحويل النص لصوت (اختياري)
+        try:
+            tts = gTTS(text=clean_res[:200], lang='ar')
+            b = io.BytesIO(); tts.write_to_fp(b); st.audio(b)
+        except: pass
+        
+        st.session_state.messages.append({"role": "assistant", "content": clean_res})
