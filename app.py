@@ -3,69 +3,71 @@ from google import genai
 from google.genai import types
 import os, json
 
-# --- 1. مصفوفة العقول (تحديث المسميات للمسار الطويل لضمان عدم حدوث 404) ---
-# ملاحظة: جربنا المسار القصير وفشل، الآن نستخدم المسار الكامل
+# مصفوفة العقول بأسماء "مؤكدة" ومسارات بديلة
 MODELS_GRID = {
-    "Gemini 3 Flash": "models/gemini-2.0-flash", 
-    "Gemini 2.5 Flash": "models/gemini-1.5-flash",
-    "Gemini 1.5 Pro": "models/gemini-1.5-pro",
-    "DeepSeek R1": "models/gemini-2.0-flash-exp", # مؤقتاً لحين ربط API مستقل
-    "Kimi/Ernie": "models/gemini-1.5-flash" 
+    "Gemini 3 Flash (الأحدث)": "gemini-2.0-flash", 
+    "Gemini 2.5 Flash": "gemini-1.5-flash",
+    "Gemini 1.5 Pro": "gemini-1.5-pro",
+    "الوضع الآمن (Safe Mode)": "gemini-1.5-flash-8b" # حصة أكبر واستهلاك أقل
 }
 
 def get_super_response(engine_label, user_input, persona_type, use_search=False):
-    # نأخذ المعرف الصحيح من المصفوفة
-    engine_id = MODELS_GRID.get(engine_label, "models/gemini-2.0-flash")
+    # محاولة جلب المفتاح
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key: return "❌ مفتاح API غير مفقود في السيكرتس!"
+    
+    client = genai.Client(api_key=api_key)
+    engine_id = MODELS_GRID.get(engine_label, "gemini-2.0-flash")
     
     try:
-        # إنشاء العميل مع تحديد النسخة v1 لضمان التوافق
-        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        
+        # إعداد البحث
         search_tool = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
         
         config = types.GenerateContentConfig(
-            system_instruction=f"أنت {persona_type}. خاطب مصعب باحترافية.",
+            system_instruction=f"أنت {persona_type}. رد بلهجة سورية محببة لمصعب إذا سأل عن سوريا.",
             tools=search_tool
         )
         
-        # تنفيذ الطلب
+        # تنفيذ الطلب بمرونة
         response = client.models.generate_content(
             model=engine_id, 
-            contents=user_input, 
+            contents=[user_input], 
             config=config
         )
         return response.text
 
     except Exception as e:
         error_msg = str(e)
-        if "404" in error_msg:
-            return f"❌ خطأ 404: المحرك {engine_id} غير مستجيب. يبدو أن جوجل غيرت مسميات الـ API. جرب 'Gemini 3 Flash'."
-        if "429" in error_msg:
-            return "⚠️ استنفدت الحصة اليومية. يرجى الانتظار قليلاً أو تبديل الحساب."
-        return f"⚠️ خطأ تقني: {error_msg}"
+        # نظام الإنقاذ التلقائي
+        if "429" in error_msg or "404" in error_msg:
+            st.warning(f"⚠️ المحرك {engine_label} متوقف حالياً. أحاول جلب الإجابة عبر 'الوضع الآمن'...")
+            try:
+                # محاولة أخيرة باستخدام النموذج الأخف (8b)
+                res_fallback = client.models.generate_content(model="gemini-1.5-flash-8b", contents=[user_input])
+                return res_fallback.text
+            except:
+                return "❌ يا مصعب، جوجل أغلق الحصة المجانية تماماً لهذا اليوم. الحل الوحيد الآن هو تغيير مفتاح API أو الانتظار لغدٍ."
+        return f"⚠️ عذراً، خطأ مفاجئ: {error_msg}"
 
 # --- الواجهة الجانبية ---
 with st.sidebar:
-    st.title("🛡️ إصلاح الرادار v30")
+    st.title("🛡️ رادار مصعب v31")
+    st.info("💡 نصيحة: إذا استمر الخطأ، فالحصة اليومية لحسابك انتهت.")
+    engine_choice = st.selectbox("🎯 العقل المختار:", list(MODELS_GRID.keys()))
+    web_on = st.toggle("🌐 بحث مباشر عن الطقس", value=True)
     if st.button("🗑️ مسح السجل"):
         st.session_state.messages = []
         st.rerun()
-    
-    engine_choice = st.selectbox("🎯 اختر العقل:", list(MODELS_GRID.keys()))
-    web_on = st.toggle("🌐 تفعيل البحث المباشر", value=True)
-    persona = st.radio("👤 الشخصية:", ["المدرس الذكي 👨‍🏫", "الخبير التقني 🛠️"])
 
-# --- عرض النتائج ---
+# --- منطق العرض ---
 if "messages" not in st.session_state: st.session_state.messages = []
-
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
-if prompt := st.chat_input("ما هو حال الطقس في اسطنبول؟"):
+if prompt := st.chat_input("كيف الطقس في سوريا الآن؟"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
-
     with st.chat_message("assistant"):
-        res = get_super_response(engine_choice, prompt, persona, use_search=web_on)
+        res = get_super_response(engine_choice, prompt, "المدرس الذكي 👨‍🏫", use_search=web_on)
         st.markdown(res)
         st.session_state.messages.append({"role": "assistant", "content": res})
