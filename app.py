@@ -1,56 +1,86 @@
 import streamlit as st
+from google import genai
+from google.genai import types
+import pandas as pd
+import io
 
-# --- 1. تعريف عائلة Gemini (العقل المدبر) ---
-GEMINI_FAMILY = {
-    "Gemini 2.0 Flash": "للسرعة الفائقة والمهام اللحظية.",
-    "Gemini 1.5 Pro": "للتحليل العميق والملفات الضخمة (الـ PDF الطويلة).",
-    "Gemini Ultra": "للمشكلات البرمجية المعقدة جداً."
+# --- 1. إعدادات الهوية والواجهة (تصحيح الخطأ السابق) ---
+st.set_page_config(page_title="التحالف الفائق v19", layout="wide", page_icon="🔱")
+
+st.markdown("""
+    <style>
+    .stApp { background-color: #050a10; color: #e0e0e0; }
+    .main-header { font-size: 35px; color: #00d4ff; text-align: center; text-shadow: 0 0 10px #00d4ff; }
+    .brain-card { background: rgba(0, 212, 255, 0.05); border: 1px solid #00d4ff; padding: 15px; border-radius: 15px; margin-bottom: 10px; }
+    </style>
+    """, unsafe_allow_html=True) # تم التصحيح هنا من input إلى html
+
+# --- 2. تعريف العقول والمولدات ---
+BRAINS = {
+    "المبرمج (DeepSeek)": "خبير الأكواد وتطوير الأنظمة.",
+    "المحلل (Gemini Pro)": "خبير قراءة الـ PDF والجداول الضخمة.",
+    "الخبير الأمني (Coder)": "خبير فك التشفير وحماية البيانات.",
+    "المخطط (Strategic)": "خبير وضع خطط العمل والمشاريع.",
+    "المبدع (Flash)": "خبير الصور والوسائط المتعددة.",
+    "المدقق (Qwen)": "خبير مراجعة الأخطاء والمنطق الصيني.",
+    "المتحدث (Orator)": "خبير التقارير النهائية والصوت."
 }
 
-# --- 2. تعريف المولدات الصينية (قوة البرمجة والمنطق) ---
-CHINESE_MODELS = {
-    "DeepSeek-V3": "ملك البرمجة وكتابة الأكواد المعقدة.",
-    "Qwen-Max (Alibaba)": "الخبير في تحليل البيانات والمنطق الرياضي.",
-    "DeepSeek-Coder": "المتخصص في فحص الثغرات الأمنية."
-}
-
-# --- 3. واجهة التحكم في "السبع عقول" ---
-st.markdown("## 🔱 غرفة عمليات التحالف: السبع عقول")
-
-with st.expander("🤖 حالة المحركات العالمية المتصلة"):
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info("🧬 عائلة Gemini: متصلة (USA)")
-    with col2:
-        st.error("🐉 المولدات الصينية: متصلة عبر API (China)")
-
-# --- 4. منطق دمج العقول مع المولدات ---
-def execute_alliance_task(user_input, task_type):
-    if task_type == "برمجة":
-        # توجيه المهمة لعقل "المبرمج" باستخدام DeepSeek
-        brain = "المبرمج"
-        engine = "DeepSeek-V3"
-    elif task_type == "تحليل بيانات":
-        # توجيه المهمة لعقل "المحلل" باستخدام Gemini Pro
-        brain = "المحلل الجنائي"
-        engine = "Gemini 1.5 Pro"
-    else:
-        brain = "المخطط الاستراتيجي"
-        engine = "Gemini 2.0 Flash"
-        
-    return f"✅ العقل المسؤول: {brain} | المحرك المستخدم: {engine}"
-
-# --- 5. واجهة المستخدم المحدثة ---
+# --- 3. الشريط الجانبي (غرفة التحكم) ---
 with st.sidebar:
-    st.header("⚙️ إعدادات الترسانة")
-    selected_brain = st.radio("العقل النشط حالياً:", ["المبرمج", "المحلل الجنائي", "المخطط", "المدقق الأمني"])
-    selected_engine = st.selectbox("المحرك المولد:", list(GEMINI_FAMILY.keys()) + list(CHINESE_MODELS.keys()))
+    st.image("https://img.icons8.com/fluency/144/shield.png", width=80)
+    st.title("🛡️ ترسانة التحالف")
     
-    st.divider()
-    st.write("🛰️ الاتصال بالأقمار الصناعية: نشط")
+    selected_brain = st.selectbox("🧠 اختر العقل القائد:", list(BRAINS.keys()))
+    
+    st.subheader("🚀 المحركات النشطة")
+    engine = st.selectbox("المحرك المولد:", [
+        "Gemini 2.0 Flash (سريع)", 
+        "Gemini 1.5 Pro (عميق)", 
+        "DeepSeek-V3 (برمجي)", 
+        "Qwen-Max (منطقي)"
+    ])
+    
+    uploaded_file = st.file_uploader("📂 ارفع ملف (PDF/Excel/Image)", type=['pdf', 'xlsx', 'png', 'jpg'])
 
-# تجربة المستخدم
-if prompt := st.chat_input("أدخل بياناتك أو ملفاتك يا مصعب..."):
+# --- 4. الهيكل الرئيسي للبرنامج ---
+st.markdown('<p class="main-header">🔱 نظام السبع عقول والمولدات العالمية</p>', unsafe_allow_html=True)
+
+# عرض حالة العقول
+cols = st.columns(7)
+for i, name in enumerate(BRAINS.keys()):
+    with cols[i]:
+        status = "🟢" if name == selected_brain else "⚪"
+        st.write(f"{status}\n{name.split()[0]}")
+
+st.divider()
+
+# سجل المحادثة
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# --- 5. منطق معالجة الطلبات ---
+if prompt := st.chat_input("أمرك مطاع يا مصعب..."):
+    # إضافة رسالة المستخدم
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # رد النظام (التحالف)
     with st.chat_message("assistant"):
-        st.write(f"🧠 جاري استدعاء {selected_brain} عبر محرك {selected_engine}...")
-        # هنا يتم تنفيذ الربط الفعلي عبر الـ API
+        with st.spinner(f"🔄 جاري تشغيل {selected_brain} عبر {engine}..."):
+            # محاكاة الرد (سيتم ربطه بـ API Keys الخاصة بك)
+            full_response = f"**تحليل {selected_brain}:**\n\nبناءً على المحرك {engine}، تم استلام طلبك. نحن الآن في وضع الاستعداد الكامل لمعالجة البيانات."
+            
+            if "برمج" in prompt or "كود" in prompt:
+                full_response += "\n\n```python\n# كود مولد بواسطة DeepSeek\nprint('التحالف يعمل بكفاءة')\n```"
+            
+            st.markdown(full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+# --- 6. عرض تفاصيل العقل النشط ---
+st.info(f"💡 **مهمة العقل الحالي:** {BRAINS[selected_brain]}")
