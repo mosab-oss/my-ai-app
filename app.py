@@ -2,102 +2,71 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-# --- 1. إعدادات الصفحة والهوية ---
-st.set_page_config(page_title="Gemini Super Bot", page_icon="🤖", layout="wide")
+# --- 1. إعدادات الصفحة ---
+st.set_page_config(page_title="رادار مصعب الذكي", page_icon="📡", layout="wide")
 
-# تصميم واجهة المستخدم بـ CSS بسيط
-st.markdown("""
-    <style>
-    .stChatMessage { border-radius: 15px; padding: 10px; margin-bottom: 5px; }
-    .main { background-color: #f5f7f9; }
-    </style>
-    """, unsafe_allow_input=True)
+# إصلاح تنسيق الـ CSS (وضعناه في سطر واحد لتجنب خطأ التنسيق)
+st.markdown("<style>.stChatMessage { border-radius: 15px; }</style>", unsafe_allow_input=True)
 
-# --- 2. إدارة المفاتيح والحماية ---
-# نضع قائمة مفاتيح لضمان عدم التوقف (Rotation)
-def get_all_keys():
+# --- 2. إدارة المفاتيح ---
+def get_keys():
     keys = []
-    for i in range(1, 4):  # يبحث عن GEMINI_KEY_1, GEMINI_KEY_2, GEMINI_KEY_3
+    # جلب المفاتيح من Secrets
+    for i in range(1, 4):
         k = st.secrets.get(f"GEMINI_KEY_{i}")
         if k: keys.append(k)
     return keys
 
-API_KEYS = get_all_keys()
+API_KEYS = get_keys()
 
-# --- 3. العقل المحرك (وظيفة توليد الرد) ---
-def ask_gemini(prompt, history):
+# --- 3. وظيفة جلب الرد من Gemini ---
+def get_ai_response(prompt):
     if not API_KEYS:
-        return "❌ خطأ: لم يتم ضبط مفاتيح API في Secrets."
+        return "❌ يرجى إضافة GEMINI_KEY_1 في إعدادات Secrets."
 
-    # محاولة التنفيذ عبر المفاتيح المتاحة
     for key in API_KEYS:
         try:
             client = genai.Client(api_key=key)
-            
-            # تفعيل البحث المباشر (Google Search Tool)
+            # تفعيل البحث المباشر لنتائج دقيقة (طقس، أخبار)
             search_tool = types.Tool(google_search=types.GoogleSearch())
             
             config = types.GenerateContentConfig(
-                system_instruction="""أنت مساعد ذكي ومدرس خبير لمصعب. 
-                أجب بدقة، وإذا سأل عن أخبار أو طقس استخدم البحث المباشر. 
-                تحدث بلهجة سورية خفيفة ومحببة عند الضرورة.""",
-                tools=[search_tool],
-                temperature=0.7
+                system_instruction="أنت مساعد ذكي لمصعب. استخدم البحث لتقديم معلومات دقيقة.",
+                tools=[search_tool]
             )
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash", # أحدث نسخة مستقرة لتجنب 404
+                model="gemini-2.0-flash",
                 contents=prompt,
                 config=config
             )
             return response.text
-        
         except Exception as e:
-            # إذا كان الخطأ بسبب الحصة (429) ننتقل للمفتاح التالي
-            if "429" in str(e):
+            if "429" in str(e): # إذا انتهت الحصة جرب المفتاح التالي
                 continue
-            else:
-                return f"⚠️ حدث خطأ تقني: {str(e)}"
+            return f"⚠️ خطأ فني: {str(e)}"
     
-    return "😴 يبدو أن جميع المفاتيح استهلكت حصتها اليومية. حاول لاحقاً."
+    return "😴 جميع المفاتيح استهلكت حصتها، عد لاحقاً."
 
-# --- 4. بناء واجهة المستخدم ---
-st.title("🤖 نظام مصعب للذكاء الاصطناعي")
-st.caption("نسخة شاملة تجمع كل ميزات التحديثات السابقة")
+# --- 4. واجهة المحادثة ---
+st.title("📡 رادار مصعب الذكي")
 
-# القائمة الجانبية (Sidebar)
-with st.sidebar:
-    st.header("⚙️ لوحة التحكم")
-    st.info(f"عدد المفاتيح المتصلة: {len(API_KEYS)}")
-    if st.button("🗑️ مسح السجل"):
-        st.session_state.chat_history = []
-        st.rerun()
-    st.divider()
-    st.write("تم التطوير بواسطة مصعب و Gemini")
-
-# إدارة ذاكرة الدردشة
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# عرض الرسائل السابقة من الذاكرة
-for message in st.session_state.messages if "messages" in st.session_state else []:
-     pass # كود العرض المعتاد
-
-# عرض المحادثة
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# عرض الرسائل
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# منطقة الإدخال
-if user_input := st.chat_input("كيف يمكنني مساعدتك اليوم؟"):
+# إدخال المستخدم
+if user_input := st.chat_input("اسألني عن أي شيء..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        response = ask_gemini(user_input, st.session_state.messages)
-        st.markdown(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        with st.spinner("جاري التفكير والبحث..."):
+            response = get_ai_response(user_input)
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
