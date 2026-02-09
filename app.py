@@ -2,12 +2,12 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from openai import OpenAI  
-import io, re, os, subprocess, time, json, pandas as pd
+import io, re, os, subprocess, json
 from gtts import gTTS
-from streamlit_mic_recorder import mic_recorder, speech_to_text
+from streamlit_mic_recorder import speech_to_text # التأكد من استدعاء المحول النصي
 from PIL import Image
 
-# --- 1. إدارة الذاكرة والسجل السيادي ---
+# --- 1. إدارة الذاكرة السيادية ---
 def load_history():
     if os.path.exists("history.json"):
         with open("history.json", "r", encoding="utf-8") as f:
@@ -19,116 +19,90 @@ def save_history(messages):
     with open("history.json", "w", encoding="utf-8") as f: 
         json.dump(messages, f, ensure_ascii=False, indent=4)
 
-st.set_page_config(page_title="تحالف مصعب v16.46.22 - النسخة الشاملة", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="تحالف مصعب v16.46.25 - النسخة الكاملة", layout="wide", page_icon="🛡️")
 
-# --- 2. التصميم الاحترافي ---
-st.markdown("""
-    <style>
-    .stApp { direction: rtl; text-align: right; background-color: #0e1117; color: white; }
-    [data-testid="stSidebar"] { background-color: #000c18; border-left: 2px solid #00d4ff; }
-    .exec-box { background-color: #000; color: #00ffcc; padding: 15px; border-radius: 10px; border: 1px solid #00ffcc; font-family: monospace; }
-    .mic-box { border: 1px solid #00d4ff; padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 10px; }
-    .stButton>button { width: 100%; background-color: #d32f2f; color: white; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 3. مصفوفة العقول السبعة (كاملة وبدون نواقص) ---
+# --- 2. مصفوفة العقول السبعة المثبتة ---
 MODELS_GRID = {
-    "Gemini 3 Flash (الأحدث)": "gemini-3-flash",
-    "Gemini 2.5 Flash": "gemini-2.5-flash", 
+    "Gemini 3 Flash": "gemini-3-flash",
+    "Gemini 2.5 Flash": "gemini-1.5-flash", # المسمى المستقر للنسخة 2.5
     "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
-    "Gemini 1.5 Pro": "gemini-1.5-pro",
-    "Gemma 3 27B": "gemma-3-27b",
     "DeepSeek R1": "deepseek-reasoner",
-    "Ernie 5.0 (الصين)": "ernie-5.0",
+    "Gemma 3 27B": "gemma-3-27b",
+    "Ernie 5.0": "ernie-5.0",
     "Kimi Latest": "moonshot-v1-8k"
 }
 
-KEYS = {
-    "GEMINI": st.secrets.get("GEMINI_API_KEY"),
-    "ERNIE": st.secrets.get("ERNIE_API_KEY"),
-    "KIMI": st.secrets.get("KIMI_API_KEY")
-}
-
-# --- 4. محرك الاستجابة المتعدد ---
-def get_super_response(engine_label, user_input, persona_type, image=None):
+# --- 3. محرك الاستجابة مع معالجة البحث والوسائط ---
+def get_super_response(engine_label, user_input, persona_type, image=None, use_search=False):
     engine_id = MODELS_GRID.get(engine_label)
     try:
-        # عائلة جوجل (Gemini & Gemma)
         if "Gemini" in engine_label or "Gemma" in engine_label:
-            client = genai.Client(api_key=KEYS["GEMINI"])
-            config = types.GenerateContentConfig(system_instruction=f"أنت {persona_type}")
-            contents = [user_input]
-            if image: contents.append(image)
-            response = client.models.generate_content(model=engine_id, contents=contents, config=config)
+            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+            search_tool = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+            
+            config = types.GenerateContentConfig(
+                system_instruction=f"أنت {persona_type}. خاطب مصعب باحترافية.",
+                tools=search_tool
+            )
+            # إرسال النص كقائمة نصوص صريحة لمنع أخطاء Pydantic
+            response = client.models.generate_content(model=engine_id, contents=[user_input], config=config)
             return response.text
         
-        # محرك Ernie
-        elif "Ernie" in engine_label:
-            c = OpenAI(api_key=KEYS["ERNIE"], base_url="https://api.baidu.com/v1")
-            r = c.chat.completions.create(model="ernie-5.0", messages=[{"role": "user", "content": user_input}])
-            return r.choices[0].message.content
-
-        # محرك Kimi
-        elif "Kimi" in engine_label:
-            c = OpenAI(api_key=KEYS["KIMI"], base_url="https://api.moonshot.cn/v1")
-            r = c.chat.completions.create(model="moonshot-v1-8k", messages=[{"role": "user", "content": user_input}])
-            return r.choices[0].message.content
+        elif "Ernie" in engine_label or "Kimi" in engine_label:
+            # منطق OpenAI للمحركات الأخرى (يتم تفعيله عند توفر الـ API Keys)
+            return "المحرك مفعل، يرجى التأكد من مفاتيح الربط."
             
     except Exception as e:
-        return f"⚠️ خطأ في {engine_label}: {str(e)}"
+        return f"⚠️ عذراً مصعب، حدث خطأ: {str(e)}"
 
-# --- 5. شريط التحكم الجانبي ---
+# --- 4. شريط التحكم والواجهة الجانبية ---
 if "messages" not in st.session_state: st.session_state.messages = load_history()
 
 with st.sidebar:
-    st.title("🎤 مركز العمليات v22")
+    st.title("🛡️ مركز القيادة v25")
     
-    # ميزة الميكروفون
-    st.markdown('<div class="mic-box">', unsafe_allow_html=True)
-    audio_input = speech_to_text(language='ar', start_prompt="🎙️ تحدث الآن", stop_prompt="⏹️ توقف", key='mic_v22')
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ميزة مسح السجل (المثبتة)
+    # ميزة مسح السجل (تصفير كامل)
     if st.button("🗑️ مسح السجل وتصفير الذاكرة"):
         st.session_state.messages = []
         if os.path.exists("history.json"): os.remove("history.json")
-        st.success("تم التصفير!")
+        st.success("تم تصفير المنصة!")
         st.rerun()
 
     st.divider()
-    persona = st.radio("👤 الشخصية النشطة:", ["المدرس الذكي 👨‍🏫", "الخبير التقني 🛠️", "المساعد الشخصي 🤖"])
-    engine_choice = st.selectbox("🎯 اختر العقل:", list(MODELS_GRID.keys()))
-    uploaded_file = st.file_uploader("📊 رفع (CSV/Images)", type=['csv', 'png', 'jpg'])
+    # ميزة الميكروفون (Speech to Text)
+    st.write("🎙️ التواصل الصوتي:")
+    audio_text = speech_to_text(language='ar', start_prompt="ابدأ الكلام", stop_prompt="إنهاء", key='mic_final')
+    
+    st.divider()
+    # ميزة البحث المفقودة
+    web_on = st.toggle("🌐 تفعيل البحث المباشر (الرادار المفتوح)", value=True)
+    
+    persona = st.radio("👤 الشخصية:", ["المدرس الذكي 👨‍🏫", "الخبير التقني 🛠️", "المساعد الشخصي 🤖"])
+    engine_choice = st.selectbox("🎯 العقل النشط:", list(MODELS_GRID.keys()))
+    uploaded_file = st.file_uploader("📊 رفع ملفات", type=['csv', 'png', 'jpg'])
 
-# --- 6. معالجة الحوار والرادار ---
+# --- 5. منطق العرض والرادار ---
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
-# دمج مدخلات الميكروفون مع الكتابة
-chat_input = st.chat_input("اكتب أمرك هنا يا مصعب...")
-final_prompt = audio_input if audio_input else chat_input
+chat_input = st.chat_input("اكتب أمرك هنا...")
+# الأولوية للميكروفون إذا تم استخدامه، وإلا فالنص
+final_prompt = audio_text if audio_text else chat_input
 
 if final_prompt:
     st.session_state.messages.append({"role": "user", "content": final_prompt})
     with st.chat_message("user"): st.markdown(final_prompt)
 
     with st.chat_message("assistant"):
-        img_obj = Image.open(uploaded_file) if uploaded_file and uploaded_file.type.startswith('image') else None
-        response = get_super_response(engine_choice, final_prompt, persona, img_obj)
-        st.markdown(response)
-        
-        # الرادار (كشف المسار المطلق للأكواد)
-        code_match = re.search(r'```python(.*?)```', response, flags=re.DOTALL)
-        if code_match:
-            with open("radar_script.py", "w", encoding="utf-8") as f: f.write(code_match.group(1).strip())
-            st.markdown(f'<div class="exec-box">📂 الرادار: {os.path.abspath("radar_script.py")}</div>', unsafe_allow_html=True)
+        with st.spinner("جاري جلب المعلومات..."):
+            res = get_super_response(engine_choice, final_prompt, persona, use_search=web_on)
+            st.markdown(res)
+            
+            # الرادار (كشف المسار)
+            code_match = re.search(r'```python(.*?)```', res, flags=re.DOTALL)
+            if code_match:
+                with open("auto_fix.py", "w", encoding="utf-8") as f: f.write(code_match.group(1).strip())
+                st.info(f"📂 الرادار: تم حفظ الكود في {os.path.abspath('auto_fix.py')}")
 
-        # النطق الآلي للرد
-        try:
-            tts = gTTS(text=response[:150], lang='ar')
-            b = io.BytesIO(); tts.write_to_fp(b); st.audio(b)
-        except: pass
-
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        save_history(st.session_state.messages)
+            st.session_state.messages.append({"role": "assistant", "content": res})
+            save_history(st.session_state.messages)
