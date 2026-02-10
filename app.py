@@ -1,96 +1,107 @@
 import streamlit as st
-from google import genai
-from google.genai import types
-import pandas as pd
-import io
+import google.generativeai as genai
+from openai import OpenAI
+import io, re, os, subprocess
+from gtts import gTTS
 from PIL import Image
-import PyPDF2
+from streamlit_mic_recorder import mic_recorder 
 
-# --- 1. إعدادات الصفحة والواجهة ---
-st.set_page_config(page_title="التحالف v16.12.0", layout="wide", page_icon="⚡")
+# --- 1. الإعدادات والواجهة (RTL) ---
+st.set_page_config(page_title="منصة مصعب v16.13.5", layout="wide", page_icon="⚙️")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #0d1117; color: #c9d1d9; }
-    .status-box { padding: 10px; border-radius: 5px; border-left: 5px solid #238636; background: #161b22; }
-    .main-title { color: #58a6ff; text-align: center; font-size: 30px; font-weight: bold; }
+    .stApp { direction: rtl; text-align: right; }
+    section[data-testid="stSidebar"] { direction: rtl; background-color: #050a30; }
+    .exec-box { background-color: #1a1a1a; color: #00ff00; padding: 15px; border-radius: 10px; border: 1px solid #00ff00; font-family: monospace; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. وظائف معالجة الملفات ---
-def process_document(file):
-    try:
-        if file.type == "application/pdf":
-            reader = PyPDF2.PdfReader(file)
-            return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        elif file.name.endswith(('.csv', '.xlsx')):
-            df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
-            return df.head(100).to_string() # قراءة أول 100 سطر للتحليل
-    except Exception as e:
-        return f"خطأ في قراءة الملف: {e}"
-    return ""
+# الربط التقني (Gemini & Local APIs)
+api_key = st.secrets.get("GEMINI_API_KEY")
+if api_key: genai.configure(api_key=api_key)
 
-# --- 3. الاتصال بمحرك Gemini ---
-def call_gemini(prompt, file_data="", image=None):
-    # سيستخدم النظام المفتاح المخزن في Streamlit Secrets
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+# --- 2. وظيفة التنفيذ الذكي للأكواد ---
+def execute_logic(text):
+    # إزالة وسوم التفكير للعرض النظيف
+    display_text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
-    full_prompt = f"سياق البيانات المرفقة:\n{file_data}\n\nطلب المستخدم: {prompt}"
-    contents = [full_prompt]
+    # البحث عن نمط حفظ الملف SAVE_FILE: name | content={}
+    file_pattern = r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*content=\{(.*?)\}'
+    match = re.search(file_pattern, text, flags=re.DOTALL)
     
-    if image:
-        contents.append(image)
-        
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=contents
-    )
-    return response.text
+    exec_output = ""
+    if match:
+        fname, fcontent = match.group(1).strip(), match.group(2).strip()
+        fcontent = re.sub(r'```python|```', '', fcontent).strip()
+        try:
+            with open(fname, 'w', encoding='utf-8') as f: f.write(fcontent)
+            if fname.endswith('.py'):
+                res = subprocess.run(['python3', fname], capture_output=True, text=True, timeout=10)
+                exec_output = f"🖥️ ناتج التنفيذ:\n{res.stdout}\n{res.stderr}"
+        except Exception as e: exec_output = f"❌ خطأ: {e}"
+    return display_text, exec_output
 
-# --- 4. تصميم واجهة المستخدم (كما في الصورة) ---
-st.markdown('<p class="main-title">🛡️ v16.12.0 نظام التحالف - الإصدار</p>', unsafe_allow_html=True)
-
+# --- 3. القائمة الجانبية: "كل الميزات" في مكان واحد ---
 with st.sidebar:
-    st.header("⚙️ لوحة التحكم")
-    st.success("الحالة: مستقر ✅")
+    st.title("🎮 غرفة التحكم v16.13.5")
     
-    uploaded_file = st.file_uploader("إرفاق مستند أو صورة", type=['pdf', 'csv', 'xlsx', 'png', 'jpg'])
+    # أ. المغرفون (الميكروفون)
+    st.subheader("🎤 المغرفون")
+    audio_record = mic_recorder(start_prompt="تحدث الآن", stop_prompt="إرسال", key='main_mic')
     
     st.divider()
-    if st.button("🗑️ مسح الذاكرة"):
-        st.session_state.chat_history = []
-        st.rerun()
 
-# تهيئة سجل المحادثة
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+    # ب. التحالف العالمي (المحركات)
+    engine_choice = st.selectbox(
+        "🎯 اختر المحرك (العقل):", 
+        ["DeepSeek R1 (محلي)", "Gemini 2.5 Flash", "Kimi AI (ذاكرة)", "ERNIE Bot (معارف)"]
+    )
 
-# عرض المحادثة
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    # ج. مستوى التفكير والشخصية
+    thinking_level = st.select_slider("🧠 مستوى التفكير:", ["Low", "Medium", "High"], value="High")
+    persona = st.selectbox("👤 الشخصية:", ["المعرفون", "مساعد مبرمج", "وكيل تنفيذ"])
 
-# منطقة إدخال الأوامر
-if user_input := st.chat_input("تحدث مع التحالف..."):
-    st.session_state.chat_history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    st.divider()
+
+    # د. الأدوات الإضافية (رفع الملفات وفحص الموديلات)
+    uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "txt", "py", "png", "jpg"])
+    
+    if st.button("🔍 فحص الموديلات النشطة"):
+        st.info("جاري فحص الاتصال بـ LM Studio و Gemini API...")
+
+# --- 4. معالجة المحادثة والتنفيذ ---
+if "messages" not in st.session_state: st.session_state.messages = []
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+
+prompt = st.chat_input("تحدث مع التحالف العالمي...")
+
+if prompt or audio_record or uploaded_file:
+    user_txt = prompt if prompt else "🎤 [أمر صوتي عبر المغرفون]"
+    st.session_state.messages.append({"role": "user", "content": user_txt})
+    with st.chat_message("user"): st.markdown(user_txt)
 
     with st.chat_message("assistant"):
-        file_context = ""
-        img_obj = None
-        
-        if uploaded_file:
-            if uploaded_file.type.startswith('image'):
-                img_obj = Image.open(uploaded_file)
-            else:
-                with st.status("🔍 جاري تحليل المستند..."):
-                    file_context = process_document(uploaded_file)
-        
-        with st.spinner("🌀 التحالف يحلل الطلب..."):
-            try:
-                answer = call_gemini(user_input, file_context, img_obj)
-                st.markdown(answer)
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
-            except Exception as e:
-                st.error(f"حدث خطأ في الاتصال بالمحرك: {e}")
+        try:
+            # توجيه الطلب للمحرك المختار (مثال: Gemini)
+            model = genai.GenerativeModel("models/gemini-2.5-flash")
+            full_req = f"بصفتك {persona} (تفكير {thinking_level}): {user_txt}. إذا طلبت كود استخدم صيغة SAVE_FILE: name | content={{}}."
+            
+            response = model.generate_content(full_req)
+            
+            # تنظيف وتطوير الرد + التنفيذ التلقائي
+            clean_txt, execution_res = execute_logic(response.text)
+            st.markdown(clean_txt)
+            
+            if execution_res:
+                st.markdown(f'<div class="exec-box">{execution_res}</div>', unsafe_allow_html=True)
+
+            # الرد الصوتي (TTS)
+            tts = gTTS(text=clean_txt[:300], lang='ar')
+            audio_fp = io.BytesIO()
+            tts.write_to_fp(audio_fp)
+            st.audio(audio_fp, format='audio/mp3')
+
+            st.session_state.messages.append({"role": "assistant", "content": clean_txt})
+        except Exception as e: st.error(f"عذراً، حدث خطأ: {e}")
