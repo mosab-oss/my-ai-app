@@ -56,7 +56,7 @@ with st.sidebar:
     # اختيار المحرك
     engine_choice = st.selectbox(
         "🎯 المحرك:",
-        ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1"]
+        ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1", "ernie 5.0"]
     )
     
     # رفع الملفات
