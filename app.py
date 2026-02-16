@@ -9,7 +9,8 @@ from openai import OpenAI
 from PIL import Image
 import arabic_reshaper
 from bidi.algorithm import get_display
-import fitz  # مكتبة PyMuPDF لقراءة ملفات PDF باحترافية
+import fitz  # مكتبة PyMuPDF لقراءة ملفات PDF
+from gtts import gTTS  # ميزة الرد الصوتي
 
 # --- [1] أسطول الموديلات ومجلس الخبراء الكامل ---
 model_map = {
@@ -47,10 +48,22 @@ def extract_pdf_content(file_bytes):
         text += page.get_text()
     return text
 
+# دالة توليد الرد الصوتي
+def text_to_speech_ar(text):
+    try:
+        # gTTS تعمل بشكل جيد مع العربية مباشرة دون الحاجة لـ reshaper في أغلب الأحيان
+        tts = gTTS(text=text, lang='ar')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return fp
+    except Exception as e:
+        st.error(f"خطأ في توليد الصوت: {e}")
+        return None
+
 if "request_count" not in st.session_state: st.session_state.request_count = 0
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# --- [2] إدارة الاتصال والمحرك التنفيذي (مع دعم الذاكرة والملفات) ---
+# --- [2] إدارة الاتصال والمحرك التنفيذي ---
 def get_gemini_client():
     try:
         return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -66,9 +79,8 @@ def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
             client = get_gemini_client()
             if not client: return "🚨 فشل في الاتصال بالخادم."
 
-            # بناء الذاكرة (Chat History) لتذكر السياق
             history = []
-            for msg in st.session_state.messages[-6:]: # تذكر آخر 6 رسائل لضمان السرعة
+            for msg in st.session_state.messages[-6:]:
                 role = "user" if msg["role"] == "user" else "model"
                 history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
 
@@ -79,22 +91,15 @@ def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
             )
 
             content_list = []
-            
-            # 1. إضافة نص الـ PDF إذا وُجد
             if pdf_text:
                 content_list.append(f"محتوى مستند PDF المرفق:\n{pdf_text}\n\nالسؤال المطلوب حول المستند:")
-
-            # 2. إضافة الصورة إذا وُجدت
-            if image_data and not pdf_text: # Gemini يتعامل مع الصور والـ PDF بطرق مختلفة
+            if image_data and not pdf_text:
                 content_list.append(Image.open(image_data))
-            
-            # 3. إضافة الصوت أو النص
             if is_voice:
                 content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
             else:
                 content_list.append(prompt_data)
 
-            # إنشاء جلسة دردشة بالذاكرة
             chat = client.chats.create(model=target_model, config=config, history=history)
             response = chat.send_message(content_list)
             
@@ -102,19 +107,13 @@ def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
             return response.text
 
         elif provider == "DeepSeek AI":
-            # ملاحظة: DeepSeek حالياً لا يدعم البحث الحي أو الصوت بنفس طريقة Gemini في هذا الكود
             client = OpenAI(api_key=st.secrets.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
-            
-            # بناء الذاكرة لـ DeepSeek
             ds_messages = [{"role": "system", "content": expert_instruction}]
             for msg in st.session_state.messages[-5:]:
                 ds_messages.append({"role": msg["role"], "content": msg["content"]})
             ds_messages.append({"role": "user", "content": str(prompt_data)})
 
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=ds_messages
-            )
+            response = client.chat.completions.create(model="deepseek-chat", messages=ds_messages)
             st.session_state.request_count += 1
             return response.choices[0].message.content
 
@@ -149,6 +148,7 @@ with st.sidebar:
     
     st.divider()
     live_search = st.toggle("رادار البحث الحي 📡", value=True)
+    speak_response = st.toggle("نطق الإجابة آلياً 🔊", value=True) # خيار للتحكم بالصوت
     uploaded_file = st.file_uploader("📦 رفع (PNG, JPG, PDF)", type=['png', 'jpg', 'jpeg', 'pdf'])
     
     if st.button("🗑️ تطهير السجل"):
@@ -157,7 +157,10 @@ with st.sidebar:
 
 # عرض الرسائل
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]): st.markdown(m["content"])
+    with st.chat_message(m["role"]): 
+        st.markdown(m["content"])
+        if m["role"] == "assistant" and "audio" in m:
+            st.audio(m["audio"], format="audio/mp3")
 
 # --- [4] منطقة الإدخال الذكية ---
 from streamlit_mic_recorder import mic_recorder
@@ -178,7 +181,6 @@ elif text_input:
     input_val = text_input
 
 if input_val:
-    # معالجة الملفات المرفقة (PDF)
     pdf_text = None
     if uploaded_file and uploaded_file.type == "application/pdf":
         with st.spinner("جاري مسح المستند ضوئياً..."):
@@ -198,5 +200,14 @@ if input_val:
         with st.spinner(f"جاري التنفيذ بواسطة {selected_expert}..."):
             res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
             st.markdown(res)
-            st.session_state.messages.append({"role": "assistant", "content": res})
+            
+            # معالجة الصوت
+            msg_data = {"role": "assistant", "content": res}
+            if speak_response:
+                audio_fp = text_to_speech_ar(res)
+                if audio_fp:
+                    st.audio(audio_fp, format="audio/mp3")
+                    msg_data["audio"] = audio_fp
+            
+            st.session_state.messages.append(msg_data)
             st.download_button("💾 تصدير التقرير التنفيذي", res, file_name="alliance_empire_report.txt")
