@@ -128,7 +128,8 @@ st.markdown("""
         font-weight: bold !important;
     }
     </style>
-    """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True) 
+
 with st.sidebar:
     st.title("🛡️ مركز القيادة")
     st.progress(min(st.session_state.request_count / 50, 1.0))
