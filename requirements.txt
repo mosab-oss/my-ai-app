@@ -7,3 +7,5 @@ gTTS
 openai
 google-genai
 PyPDF2
+arabic-reshaper
+python-bidi
