@@ -51,7 +51,6 @@ def extract_pdf_content(file_bytes):
 # دالة توليد الرد الصوتي
 def text_to_speech_ar(text):
     try:
-        # gTTS تعمل بشكل جيد مع العربية مباشرة دون الحاجة لـ reshaper في أغلب الأحيان
         tts = gTTS(text=text, lang='ar')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
@@ -63,7 +62,7 @@ def text_to_speech_ar(text):
 if "request_count" not in st.session_state: st.session_state.request_count = 0
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# --- [2] إدارة الاتصال والمحرك التنفيذي ---
+# --- [2] إدارة الاتصال والمحرك التنفيذي المطور ---
 def get_gemini_client():
     try:
         return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -72,22 +71,26 @@ def get_gemini_client():
 
 def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
     target_model = model_map.get(selected_model, "gemini-flash-latest")
-    expert_instruction = expert_map.get(selected_expert, "خبير عام")
+    
+    # تحسين أمر البحث الحي لضمان استجابة الرادار
+    search_instruction = "\nاستخدم البحث الحي (Google Search) دائماً للحصول على أدق المعلومات الحالية." if live_search else ""
+    expert_instruction = expert_map.get(selected_expert, "خبير عام") + search_instruction
 
     try:
         if provider == "Google Gemini":
             client = get_gemini_client()
             if not client: return "🚨 فشل في الاتصال بالخادم."
 
+            # تقليل سياق الذاكرة لتقليل ضغط الـ 429
             history = []
-            for msg in st.session_state.messages[-6:]:
+            for msg in st.session_state.messages[-3:]: 
                 role = "user" if msg["role"] == "user" else "model"
                 history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
 
             config = types.GenerateContentConfig(
                 system_instruction=expert_instruction,
                 tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None,
-                temperature=0.7
+                temperature=0.3 # تقليل الحرارة لزيادة دقة البحث الحي
             )
 
             content_list = []
@@ -95,11 +98,13 @@ def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
                 content_list.append(f"محتوى مستند PDF المرفق:\n{pdf_text}\n\nالسؤال المطلوب حول المستند:")
             if image_data and not pdf_text:
                 content_list.append(Image.open(image_data))
+            
             if is_voice:
                 content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
             else:
                 content_list.append(prompt_data)
 
+            # تشغيل الجلسة
             chat = client.chats.create(model=target_model, config=config, history=history)
             response = chat.send_message(content_list)
             
@@ -119,9 +124,7 @@ def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
 
     except Exception as e:
         if "429" in str(e):
-            st.warning("🔄 نظام التهدئة: انتظر 15 ثانية...")
-            time.sleep(15)
-            return "⚠️ يبدو أن الضغط كبير حالياً، أعد إرسال الأمر من فضلك."
+            return "🚫 وصلت للحد الأقصى للطلبات المجانية حالياً. يرجى الانتظار دقيقة واحدة ثم إعادة المحاولة."
         return f"❌ خطأ تقني: {str(e)}"
 
 # --- [3] واجهة المستخدم الاحترافية ---
@@ -148,7 +151,7 @@ with st.sidebar:
     
     st.divider()
     live_search = st.toggle("رادار البحث الحي 📡", value=True)
-    speak_response = st.toggle("نطق الإجابة آلياً 🔊", value=True) # خيار للتحكم بالصوت
+    speak_response = st.toggle("نطق الإجابة آلياً 🔊", value=True)
     uploaded_file = st.file_uploader("📦 رفع (PNG, JPG, PDF)", type=['png', 'jpg', 'jpeg', 'pdf'])
     
     if st.button("🗑️ تطهير السجل"):
@@ -193,21 +196,27 @@ if input_val:
         st.markdown(label)
         if uploaded_file and uploaded_file.type != "application/pdf": 
             st.image(uploaded_file, width=300)
-        elif pdf_text:
-            st.info("📄 تم إرفاق مستند PDF ومعالجته.")
 
     with st.chat_message("assistant"):
-        with st.spinner(f"جاري التنفيذ بواسطة {selected_expert}..."):
-            res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
-            st.markdown(res)
-            
-            # معالجة الصوت
-            msg_data = {"role": "assistant", "content": res}
-            if speak_response:
-                audio_fp = text_to_speech_ar(res)
-                if audio_fp:
-                    st.audio(audio_fp, format="audio/mp3")
-                    msg_data["audio"] = audio_fp
-            
-            st.session_state.messages.append(msg_data)
-            st.download_button("💾 تصدير التقرير التنفيذي", res, file_name="alliance_empire_report.txt")
+        # إظهار حالة البحث الحي إذا كان مفعلاً
+        if live_search:
+            with st.status("📡 جاري تشغيل الرادار والبحث في الويب...", expanded=True) as status:
+                st.write("🔍 جاري جلب المعلومات اللحظية...")
+                res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
+                status.update(label="✅ تم اكتمال البحث والتحليل!", state="complete", expanded=False)
+        else:
+            with st.spinner(f"جاري التنفيذ بواسطة {selected_expert}..."):
+                res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
+        
+        st.markdown(res)
+        
+        # معالجة الصوت
+        msg_data = {"role": "assistant", "content": res}
+        if speak_response:
+            audio_fp = text_to_speech_ar(res)
+            if audio_fp:
+                st.audio(audio_fp, format="audio/mp3")
+                msg_data["audio"] = audio_fp
+        
+        st.session_state.messages.append(msg_data)
+        st.download_button("💾 تصدير التقرير التنفيذي", res, file_name="alliance_empire_report.txt")
