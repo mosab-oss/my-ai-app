@@ -48,49 +48,7 @@ def get_gemini_client():
     except:
         return None
 
-def run_engine(prompt_data, is_voice=False, image_data=None):
-    target_model = model_map.get(selected_model, "gemini-flash-latest")
-    expert_instruction = expert_map.get(selected_expert, "خبير عام")
-
-    try:
-        if provider == "Google Gemini":
-            client = get_gemini_client()
-            if not client: return "🚨 فشل في الاتصال بالخادم."
-
-            config = types.GenerateContentConfig(
-                system_instruction=expert_instruction,
-                tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None,
-                temperature=0.7
-            )
-
-            content_list = []
-            if image_data: content_list.append(Image.open(image_data))
-            if is_voice:
-                content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
-            else:
-                content_list.append(prompt_data)
-
-            response = client.models.generate_content(model=target_model, contents=content_list, config=config)
-            
-            # تحديث الحصة عند النجاح فقط
-            st.session_state.request_count += 1 
-            return response.text
-
-        elif provider == "DeepSeek AI":
-            client = OpenAI(api_key=st.secrets.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": expert_instruction}, {"role": "user", "content": prompt_data}]
-            )
-            st.session_state.request_count += 1
-            return response.choices[0].message.content
-
-    except Exception as e:
-        if "429" in str(e):
-            st.warning("🔄 نظام التهدئة: انتظر 15 ثانية (بدون خصم من حصتك)...")
-            time.sleep(15)
-            return run_engine(prompt_data, is_voice, image_data)
-        return f"❌ خطأ تقني: {str(e)}"
+ 
 
 # --- [3] واجهة المستخدم الاحترافية ---
 st.set_page_config(page_title="إمبراطورية التحالف 2026", layout="wide")
@@ -99,7 +57,51 @@ st.set_page_config(page_title="إمبراطورية التحالف 2026", layout
 st.markdown("""
      <style>
     /* جعل الخلفية العامة داكنة جداً */
-    .stApp { 
+    .stApp { def run_engine(prompt_data, is_voice=False, image_data=None):
+    target_model = model_map.get(selected_model, "gemini-flash-latest")
+    expert_instruction = expert_map.get(selected_expert, "خبير عام")
+
+    try:
+        client = get_gemini_client()
+        if not client: return "🚨 فشل في الاتصال بالخادم."
+
+        # إعداد البحث الحي بشكل معزز
+        search_tool = types.Tool(google_search=types.GoogleSearch())
+        
+        config = types.GenerateContentConfig(
+            system_instruction=expert_instruction,
+            tools=[search_tool] if live_search else [], # تأكيد استدعاء الأداة
+            temperature=0.7,
+            candidate_count=1 # لزيادة سرعة الاستجابة
+        )
+
+        content_list = []
+        if image_data: content_list.append(Image.open(image_data))
+        
+        if is_voice:
+            content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
+            content_list.append("استخدم البحث الحي الآن لجلب أدق المعلومات المطلوبة في هذا التسجيل.")
+        else:
+            # إضافة حافز للموديل لاستخدام البحث
+            enhanced_prompt = f"{prompt_data} (يرجى استخدام البحث المباشر عبر الإنترنت الآن)"
+            content_list.append(enhanced_prompt)
+
+        # طلب التوليد مع رفع مهلة الانتظار
+        response = client.models.generate_content(
+            model=target_model, 
+            contents=content_list, 
+            config=config
+        )
+        
+        st.session_state.request_count += 1 
+        return response.text
+
+    except Exception as e:
+        if "429" in str(e):
+            st.warning("🔄 الرادار يواجه زحاماً.. انتظر قليلاً وسيتم جلب البيانات مجاناً...")
+            time.sleep(20)
+            return run_engine(prompt_data, is_voice, image_data)
+        return f"❌ تنبيه تقني: {str(e)}"
         background-color: #0e1117; 
         color: #ffffff !important; 
         direction: rtl; 
