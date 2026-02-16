@@ -97,11 +97,36 @@ st.set_page_config(page_title="إمبراطورية التحالف 2026", layout
 
 # كود التنسيق البصري (CSS)
 st.markdown("""
-    <style>
-    .stApp { direction: rtl; text-align: right; }
-    .stChatMessage { border-right: 5px solid #007bff; border-radius: 10px; background-color: #f0f2f6; }
-    .stDownloadButton button { background-color: #28a745 !important; color: white !important; width: 100%; border-radius: 20px; }
-    div[data-testid="stExpander"] { direction: rtl; }
+     <style>
+    /* جعل الخلفية العامة داكنة جداً */
+    .stApp { 
+        background-color: #0e1117; 
+        color: #ffffff !important; 
+        direction: rtl; 
+        text-align: right; 
+    }
+    
+    /* تنسيق فقاعات الدردشة: نص أسود على خلفية فاتحة أو نص أبيض على خلفية داكنة */
+    .stChatMessage { 
+        background-color: #262730 !important; /* لون رمادي داكن للفقاعة */
+        border-right: 5px solid #007bff !important; 
+        border-radius: 15px !important;
+        color: #ffffff !important; /* نص أبيض ناصع للرؤية */
+        margin-bottom: 10px;
+    }
+
+    /* إصدار أمر لجعل كل النصوص داخل التطبيق واضحة */
+    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+        color: #ffffff !important;
+    }
+
+    /* تحسين شكل زر التصدير ليبرز أكثر */
+    .stDownloadButton button {
+        background-color: #155724 !important;
+        color: #d4edda !important;
+        border: 1px solid #c3e6cb !important;
+        font-weight: bold !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
