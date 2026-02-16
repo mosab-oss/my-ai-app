@@ -9,3 +9,4 @@ google-genai
 PyPDF2
 arabic-reshaper
 python-bidi
+bidi
