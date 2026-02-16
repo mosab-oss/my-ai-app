@@ -1,117 +1,161 @@
 import streamlit as st
-import google.generativeai as genai
+import os
+import time
+import io
+import base64
+from google import genai
+from google.genai import types
 from openai import OpenAI
-import io, re, os, subprocess
-from gtts import gTTS
 from PIL import Image
-from streamlit_mic_recorder import mic_recorder 
+import arabic_reshaper
+from bidi.algorithm import get_display
 
-# --- 1. الإعدادات والواجهة (RTL) ---
-st.set_page_config(page_title="منصة مصعب v16.11.9", layout="wide", page_icon="🎤")
+# --- [1] أسطول الموديلات ومجلس الخبراء الكامل ---
+model_map = {
+    "Gemini 3 Flash": "gemini-3-flash-preview",
+    "Gemini 3 Pro": "gemini-3-pro-preview",
+    "Gemini 2.5 Pro": "gemini-2.5-pro",
+    "Gemini 1.5 Flash": "gemini-flash-latest"
+}
 
+expert_map = {
+    "🌍 خبير عام": "أنت مستشار عام ذكي، تجيب بدقة ووضوح ولباقة.",
+    "💻 خبير تقني": "أنت خبير برمجيات، تركز على الحلول البرمجية واكتشاف الأخطاء وتطوير الأكواد.",
+    "📈 محلل أسواق": "أنت خبير مالي، استخدم البحث الحي لجلب بيانات الذهب والبورصة والعملات وتحليلها.",
+    "📧 مساعد المراسلات": "أنت سكرتير تنفيذي، صغ إيميلات احترافية وردود دبلوماسية بناءً على المعطيات.",
+    "📊 محلل إحصائي": "أنت بروفيسور بيانات، حلل الأرقام والجداول المستخرجة وقدم رؤية إحصائية دقيقة.",
+    "✍️ خبير محتوى": "أنت كاتب محترف، حول الأفكار والمسودات إلى تقارير ومقالات متكاملة.",
+    "📚 خبير لغوي": "أنت بروفيسور لغوي، ركز على النحو والبلاغة العربية والتدقيق اللغوي.",
+    "🛡️ خبير استراتيجي": "أنت محلل استراتيجي جيوسياسي وعسكري، حلل المواقف من منظور قيادي.",
+    "⚖️ مستشار قانوني": "أنت خبير قانوني، مراجع للعقود والوثائق الرسمية والامتثال."
+}
+
+# دالة تصحيح عرض اللغة العربية
+def fix_ar(text):
+    try:
+        reshaped_text = arabic_reshaper.reshape(text)
+        return get_display(reshaped_text)
+    except:
+        return text
+
+if "request_count" not in st.session_state: st.session_state.request_count = 0
+if "messages" not in st.session_state: st.session_state.messages = []
+
+# --- [2] إدارة الاتصال والمحرك التنفيذي (حماية الحصة والتبديل الذكي) ---
+def get_gemini_client():
+    try:
+        return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    except:
+        return None
+
+def run_engine(prompt_data, is_voice=False, image_data=None):
+    target_model = model_map.get(selected_model, "gemini-flash-latest")
+    expert_instruction = expert_map.get(selected_expert, "خبير عام")
+
+    try:
+        if provider == "Google Gemini":
+            client = get_gemini_client()
+            if not client: return "🚨 فشل في الاتصال بالخادم."
+
+            config = types.GenerateContentConfig(
+                system_instruction=expert_instruction,
+                tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None,
+                temperature=0.7
+            )
+
+            content_list = []
+            if image_data: content_list.append(Image.open(image_data))
+            if is_voice:
+                content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
+            else:
+                content_list.append(prompt_data)
+
+            response = client.models.generate_content(model=target_model, contents=content_list, config=config)
+            
+            # تحديث الحصة عند النجاح فقط
+            st.session_state.request_count += 1 
+            return response.text
+
+        elif provider == "DeepSeek AI":
+            client = OpenAI(api_key=st.secrets.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "system", "content": expert_instruction}, {"role": "user", "content": prompt_data}]
+            )
+            st.session_state.request_count += 1
+            return response.choices[0].message.content
+
+    except Exception as e:
+        if "429" in str(e):
+            st.warning("🔄 نظام التهدئة: انتظر 15 ثانية (بدون خصم من حصتك)...")
+            time.sleep(15)
+            return run_engine(prompt_data, is_voice, image_data)
+        return f"❌ خطأ تقني: {str(e)}"
+
+# --- [3] واجهة المستخدم الاحترافية ---
+st.set_page_config(page_title="إمبراطورية التحالف 2026", layout="wide")
+
+# كود التنسيق البصري (CSS)
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
-    section[data-testid="stSidebar"] { direction: rtl; text-align: right; background-color: #111; }
-    .stSelectbox label, .stSlider label { color: #00ffcc !important; font-weight: bold; }
+    .stChatMessage { border-right: 5px solid #007bff; border-radius: 10px; background-color: #f0f2f6; }
+    .stDownloadButton button { background-color: #28a745 !important; color: white !important; width: 100%; border-radius: 20px; }
+    div[data-testid="stExpander"] { direction: rtl; }
     </style>
     """, unsafe_allow_html=True)
 
-# الربط المحلي ومحركات جوجل
-local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
-api_key = st.secrets.get("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-
-# --- 2. القائمة الجانبية الشاملة (كل شيء في مكان واحد) ---
 with st.sidebar:
-    st.header("🎮 مركز التحكم v16.11.9")
-    
-    # أداة الميكروفون (المغرفون) - الآن في القائمة
-    st.subheader("🎤 المغرفون (للتكلم)")
-    audio_record = mic_recorder(
-        start_prompt="بدء التسجيل", 
-        stop_prompt="إرسال الصوت", 
-        just_once=True, 
-        key='sidebar_mic'
-    )
+    st.title("🛡️ مركز القيادة")
+    st.progress(min(st.session_state.request_count / 50, 1.0))
+    st.caption(f"الطلبات الناجحة: {st.session_state.request_count} / 50")
     
     st.divider()
-
-    # مستوى التفكير
-    thinking_level = st.select_slider(
-        "🧠 مستوى التفكير:", 
-        options=["Low", "Medium", "High"], 
-        value="High"
-    )
-    
-    # اختيار الشخصية (المعرفون)
-    persona = st.selectbox(
-        "👤 اختيار الخبير:", 
-        ["المعرفون (أهل العلم)", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"]
-    )
+    provider = st.radio("المزود الاستراتيجي:", ["Google Gemini", "DeepSeek AI"])
+    selected_model = st.selectbox("الموديل:", list(model_map.keys()), index=3)
+    selected_expert = st.selectbox("الوكيل التنفيذي:", list(expert_map.keys()))
     
     st.divider()
+    live_search = st.toggle("رادار البحث الحي 📡", value=True)
+    uploaded_file = st.file_uploader("📦 رفع وسائط أو ملفات", type=['png', 'jpg', 'jpeg', 'pdf'])
     
-    # اختيار المحرك
-    engine_choice = st.selectbox(
-        "🎯 المحرك:",
-        ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1"]
-    )
-    
-    # رفع الملفات
-    uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "csv", "txt", "jpg", "png", "jpeg"])
-    
-    st.divider()
-    
-    # فحص الموديلات النشطة
-    st.subheader("🛠️ الصيانة")
-    if st.button("🔍 فحص الموديلات النشطة"):
-        try:
-            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            st.info("الموديلات المتاحة:")
-            st.code("\n".join(models))
-        except Exception as e: st.error(f"خطأ: {e}")
+    if st.button("🗑️ تطهير السجل"):
+        st.session_state.messages = []
+        st.rerun()
 
-# --- 3. واجهة الدردشة الرئيسية ---
-if "messages" not in st.session_state: st.session_state.messages = []
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+# عرض الرسائل
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]): st.markdown(m["content"])
 
-prompt = st.chat_input("اكتب سؤالك هنا أو استخدم المغرفون من القائمة الجانبية...")
+# --- [4] منطقة الإدخال الذكية (الميكروفون الدائم + النص) ---
+from streamlit_mic_recorder import mic_recorder
+col_mic, col_txt = st.columns([1, 10])
 
-# معالجة المدخلات
-if prompt or audio_record or uploaded_file:
-    user_txt = prompt if prompt else "🎤 [تم إرسال أمر صوتي]"
-    st.session_state.messages.append({"role": "user", "content": user_txt})
-    with st.chat_message("user"): st.markdown(user_txt)
+with col_mic:
+    # ميكروفون ثابت وسريع الاستجابة
+    audio = mic_recorder(start_prompt="🎤", stop_prompt="📤", key='unified_mic_v7')
+
+with col_txt:
+    text_input = st.chat_input("أصدر أوامرك هنا يا قائد...")
+
+input_val = None
+voice_flag = False
+
+if audio:
+    input_val, voice_flag = audio, True
+elif text_input:
+    input_val = text_input
+
+if input_val:
+    label = "🎤 [أمر صوتي تم استقباله]" if voice_flag else input_val
+    st.session_state.messages.append({"role": "user", "content": label})
+    with st.chat_message("user"):
+        st.markdown(label)
+        if uploaded_file: st.image(uploaded_file, width=300)
 
     with st.chat_message("assistant"):
-        try:
-            model_map = {"Gemini 3 Pro": "models/gemini-3-pro-preview", "Gemini 2.5 Flash": "models/gemini-2.5-flash"}
-            model = genai.GenerativeModel(model_map.get(engine_choice, "models/gemini-2.5-flash"))
-            
-            # بناء الطلب
-            full_prompt = f"بصفتك {persona} وبمستوى تفكير {thinking_level}: {user_txt}"
-            content_parts = [full_prompt]
-            
-            if uploaded_file:
-                if uploaded_file.type.startswith("image"):
-                    content_parts.append(Image.open(uploaded_file))
-                else:
-                    content_parts.append(uploaded_file.read().decode())
-            
-            if audio_record:
-                content_parts.append({"mime_type": "audio/wav", "data": audio_record['bytes']})
-
-            response = model.generate_content(content_parts)
-            st.markdown(response.text)
-            
-            # نطق الرد آلياً
-            tts = gTTS(text=response.text[:300], lang='ar')
-            audio_fp = io.BytesIO()
-            tts.write_to_fp(audio_fp)
-            st.audio(audio_fp, format='audio/mp3')
-            
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-        except Exception as e: st.error(f"فشل في المعالجة: {e}")
+        with st.spinner(f"جاري التنفيذ بواسطة {selected_expert}..."):
+            res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file)
+            st.markdown(res)
+            st.session_state.messages.append({"role": "assistant", "content": res})
+            st.download_button("💾 تصدير التقرير التنفيذي", res, file_name="alliance_empire_report.txt")
