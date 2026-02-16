@@ -10,4 +10,4 @@ PyPDF2
 arabic-reshaper
 python-bidi
 bidi
-pymupdf
+PyMuPDF
