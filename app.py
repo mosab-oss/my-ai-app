@@ -8,30 +8,29 @@ from openai import OpenAI
 from PIL import Image
 import arabic_reshaper
 from bidi.algorithm import get_display
-import fitz  # PyMuPDF لقراءة الـ PDF
+import pdfplumber  # المكتبة التي ثبتها السيرفر بنجاح
 from gtts import gTTS
 from streamlit_mic_recorder import mic_recorder
 
-# --- [1] مجمع العقول العالمية الموحد ---
+# --- [1] مجلس القوى العظمى (العقول العالمية) ---
 model_map = {
-    "🇺🇸 Gemini 2.0 Flash (جوجل)": "models/gemini-2.0-flash-exp",
-    "🇨🇳 DeepSeek R1 (الصين - التفكير)": "deepseek/deepseek-r1",
-    "🇨🇳 Qwen 2.5 (الصين - المعرفة)": "qwen/qwen-2.5-72b-instruct",
-    "🇪🇺 Mistral Large (أوروبا)": "mistralai/mistral-large",
-    "🇺🇸 Claude 3.5 Sonnet (أمريكا)": "anthropic/claude-3.5-sonnet"
+    "🇺🇸 Gemini 2.0 Flash (البرق الأمريكي)": "models/gemini-2.0-flash-exp",
+    "🇨🇳 DeepSeek R1 (الذكاء الصيني العميق)": "deepseek/deepseek-r1",
+    "🇪🇺 Mistral Large (الخبير الأوروبي)": "mistralai/mistral-large",
+    "🇺🇸 Claude 3.5 Sonnet (الدقة الأمريكية)": "anthropic/claude-3.5-sonnet"
 }
 
 expert_map = {
-    "📜 البروفيسور اللغوي العربي": "أنت مرجع في البلاغة العربية، وظيفتك صياغة الردود بأفصح بيان.",
-    "🛡️ المحلل الاستراتيجي": "أنت خبير جيوسياسي وعسكري، تحلل القوى العظمى بدقة.",
-    "📈 خبير الأسواق الدولية": "أنت محلل مالي، استخدم البحث الحي لجلب بيانات الذهب والبورصة.",
-    "💻 كبير المهندسين": "أنت خبير برمجيات، تكتشف الثغرات وتكتب الأكواد بكفاءة."
+    "📜 البروفيسور اللغوي العربي": "أنت مرجع في البلاغة العربية، صغ الردود بأفصح بيان ممكن.",
+    "🛡️ المستشار الاستراتيجي": "أنت محلل جيوسياسي وعسكري، تحلل توازنات القوى العالمية.",
+    "📈 خبير الأسواق الدولية": "أنت محلل مالي، استخدم البحث اللحظي لبيانات الذهب والبورصة.",
+    "💻 كبير المهندسين": "أنت خبير برمجيات، تكتشف الأخطاء وتصمم الحلول الذكية."
 }
 
-# --- [2] أدوات المعالجة المتطورة ---
-def get_pdf_text(pdf_file):
-    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    return "".join([page.get_text() for page in doc])
+# --- [2] وظائف المعالجة الاحترافية ---
+def process_pdf(pdf_file):
+    with pdfplumber.open(pdf_file) as pdf:
+        return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 def text_to_speech(text):
     tts = gTTS(text=text, lang='ar')
@@ -39,8 +38,8 @@ def text_to_speech(text):
     tts.write_to_fp(fp)
     return fp
 
-# --- [3] المحرك التنفيذي العابر للقارات ---
-def run_alliance_engine(prompt, image=None, pdf_text=None, audio_data=None):
+# --- [3] محرك القوى العظمى (المعالج المركزي) ---
+def run_alliance_engine(prompt, image=None, pdf_text=None, audio_bytes=None):
     target_model = model_map[selected_model]
     system_instr = expert_map[selected_expert]
     
@@ -49,8 +48,8 @@ def run_alliance_engine(prompt, image=None, pdf_text=None, audio_data=None):
             client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
             content_list = [prompt]
             if image: content_list.append(image)
-            if pdf_text: content_list.append(f"\nسياق ملف الـ PDF:\n{pdf_text}")
-            if audio_data: content_list = [types.Part.from_bytes(data=audio_data, mime_type="audio/wav"), prompt]
+            if pdf_text: content_list.append(f"\nوثيقة PDF:\n{pdf_text}")
+            if audio_bytes: content_list = [types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"), prompt]
 
             response = client.models.generate_content(
                 model=target_model,
@@ -62,34 +61,34 @@ def run_alliance_engine(prompt, image=None, pdf_text=None, audio_data=None):
             )
             return response.text
         else:
-            # تشغيل العقول العالمية الأخرى عبر OpenRouter
+            # تشغيل العقول العالمية (الصينية/الأوروبية) عبر OpenRouter
             client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=st.secrets["OPENROUTER_API_KEY"])
-            res = client.chat.completions.create(
-                model=target_model,
-                messages=[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
-            )
+            messages = [{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
+            if pdf_text: messages[1]["content"] += f"\nسياق الوثيقة: {pdf_text}"
+            
+            res = client.chat.completions.create(model=target_model, messages=messages)
             return res.choices[0].message.content
     except Exception as e:
-        return f"🚨 عطل تقني في الاتصال بالعقول الدولية: {str(e)}"
+        return f"🚨 عطل في الاتصال بالعقل المختارة: {str(e)}"
 
-# --- [4] واجهة مركز القيادة السيادي ---
+# --- [4] واجهة مركز القيادة العليا ---
 st.set_page_config(page_title="إمبراطورية التحالف 2026", layout="wide")
 st.title("🏛️ إمبراطورية التحالف: مركز القوى العظمى")
 
 with st.sidebar:
-    st.header("⚙️ لوحة التحكم السيادية")
-    selected_model = st.selectbox("العقل المعالج المتوفر:", list(model_map.keys()))
+    st.header("⚙️ لوحة السيادة")
+    selected_model = st.selectbox("اختر العقل المعالج:", list(model_map.keys()))
     selected_expert = st.selectbox("المستشار المفوض:", list(expert_map.keys()))
     live_search = st.toggle("رادار البحث اللحظي 📡", value=True)
-    speak_out = st.toggle("نطق الإجابة (عربي) 🗣️", value=False)
+    speak_out = st.toggle("نطق الرد (عربي) 🗣️", value=False)
     
     st.divider()
-    uploaded_file = st.file_uploader("رفع (Image, PDF)", type=['png', 'jpg', 'jpeg', 'pdf'])
+    uploaded_file = st.file_uploader("ارفع وثيقة أو صورة:", type=['png', 'jpg', 'jpeg', 'pdf'])
     
     st.write("🎤 الأمر الصوتي:")
-    audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إرسال الأمر", key='mic')
+    audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إرسال", key='mic')
 
-# --- [5] تنفيذ المعالجة ---
+# --- [5] المعالجة والعرض ---
 if prompt := st.chat_input("أصدر أوامرك السيادية..."):
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -100,16 +99,15 @@ if prompt := st.chat_input("أصدر أوامرك السيادية..."):
         
         if uploaded_file:
             if uploaded_file.type == "application/pdf":
-                pdf_txt = get_pdf_text(uploaded_file)
-                st.info("📄 تمت قراءة الوثيقة بنجاح")
+                pdf_txt = process_pdf(uploaded_file)
+                st.info("📄 تم تحليل وثيقة الـ PDF بنجاح")
             else:
                 img = Image.open(uploaded_file)
-                st.image(img, caption="تحليل الصورة المرفقة", width=300)
+                st.image(img, caption="تحليل بصري", width=300)
 
-        with st.spinner("جاري استحضار القوى العظمى..."):
-            response = run_alliance_engine(prompt, image=img, pdf_text=pdf_txt, audio_data=audio['bytes'] if audio else None)
+        with st.spinner("جاري استحضار الحكمة الدولية..."):
+            response = run_alliance_engine(prompt, image=img, pdf_text=pdf_txt, audio_bytes=audio['bytes'] if audio else None)
             st.markdown(response)
             
             if speak_out:
-                audio_fp = text_to_speech(response)
-                st.audio(audio_fp, format='audio/mp3')
+                st.audio(text_to_speech(response), format='audio/mp3')
