@@ -8,71 +8,108 @@ from openai import OpenAI
 from PIL import Image
 import arabic_reshaper
 from bidi.algorithm import get_display
-import fitz  # PyMuPDF
+import fitz  # PyMuPDF لقراءة الـ PDF
 from gtts import gTTS
+from streamlit_mic_recorder import mic_recorder
 
-# --- [1] أسطول الموديلات الموحد (أسماء دقيقة للمحرك الجديد) ---
+# --- [1] مجمع العقول العالمية الموحد ---
 model_map = {
-    "Gemini 1.5 Flash": "models/gemini-1.5-flash",
-    "Gemini 1.5 Pro": "models/gemini-1.5-pro",
-    "DeepSeek V3": "deepseek/deepseek-chat",
-    "DeepSeek R1": "deepseek/deepseek-r1",
-    "Kimi (Moonshot)": "moonshotai/moonshot-v1-8k"
+    "🇺🇸 Gemini 2.0 Flash (جوجل)": "models/gemini-2.0-flash-exp",
+    "🇨🇳 DeepSeek R1 (الصين - التفكير)": "deepseek/deepseek-r1",
+    "🇨🇳 Qwen 2.5 (الصين - المعرفة)": "qwen/qwen-2.5-72b-instruct",
+    "🇪🇺 Mistral Large (أوروبا)": "mistralai/mistral-large",
+    "🇺🇸 Claude 3.5 Sonnet (أمريكا)": "anthropic/claude-3.5-sonnet"
 }
 
 expert_map = {
-    "🌍 خبير عام": "أنت مستشار عام ذكي، تجيب بدقة ووضوح ولباقة.",
-    "💻 خبير تقني": "أنت خبير برمجيات، تركز على الحلول التقنية واكتشاف الأخطاء.",
-    "📈 محلل أسواق": "أنت خبير مالي، استخدم البحث الحي لجلب بيانات الذهب والبورصة.",
-    "🎨 فنان رقمي": "أنت خبير في تخيل الصور ووصفها بدقة لتوليدها."
+    "📜 البروفيسور اللغوي العربي": "أنت مرجع في البلاغة العربية، وظيفتك صياغة الردود بأفصح بيان.",
+    "🛡️ المحلل الاستراتيجي": "أنت خبير جيوسياسي وعسكري، تحلل القوى العظمى بدقة.",
+    "📈 خبير الأسواق الدولية": "أنت محلل مالي، استخدم البحث الحي لجلب بيانات الذهب والبورصة.",
+    "💻 كبير المهندسين": "أنت خبير برمجيات، تكتشف الثغرات وتكتب الأكواد بكفاءة."
 }
 
-# --- [2] محركات المعالجة الذكية ---
-def run_engine(prompt_data, is_voice=False):
-    target_model_id = model_map.get(selected_model, "models/gemini-1.5-flash")
-    expert_instruction = expert_map.get(selected_expert, "خبير عام")
+# --- [2] أدوات المعالجة المتطورة ---
+def get_pdf_text(pdf_file):
+    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    return "".join([page.get_text() for page in doc])
+
+def text_to_speech(text):
+    tts = gTTS(text=text, lang='ar')
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    return fp
+
+# --- [3] المحرك التنفيذي العابر للقارات ---
+def run_alliance_engine(prompt, image=None, pdf_text=None, audio_data=None):
+    target_model = model_map[selected_model]
+    system_instr = expert_map[selected_expert]
     
     try:
-        if provider == "Google Gemini":
+        if "Gemini" in selected_model:
             client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-            config = types.GenerateContentConfig(
-                system_instruction=expert_instruction,
-                tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None
+            content_list = [prompt]
+            if image: content_list.append(image)
+            if pdf_text: content_list.append(f"\nسياق ملف الـ PDF:\n{pdf_text}")
+            if audio_data: content_list = [types.Part.from_bytes(data=audio_data, mime_type="audio/wav"), prompt]
+
+            response = client.models.generate_content(
+                model=target_model,
+                contents=content_list,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instr,
+                    tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None
+                )
             )
-            content = [prompt_data] if not is_voice else [types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav")]
-            response = client.models.generate_content(model=target_model_id, contents=content, config=config)
             return response.text
         else:
-            # مسار العقول الصينية عبر OpenRouter
+            # تشغيل العقول العالمية الأخرى عبر OpenRouter
             client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=st.secrets["OPENROUTER_API_KEY"])
-            res = client.chat.completions.create(model=target_model_id, messages=[{"role": "system", "content": expert_instruction}, {"role": "user", "content": str(prompt_data)}])
+            res = client.chat.completions.create(
+                model=target_model,
+                messages=[{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}]
+            )
             return res.choices[0].message.content
     except Exception as e:
-        return f"❌ فشل المحرك: {str(e)}"
+        return f"🚨 عطل تقني في الاتصال بالعقول الدولية: {str(e)}"
 
-# --- [3] واجهة المستخدم الاحترافية ---
+# --- [4] واجهة مركز القيادة السيادي ---
 st.set_page_config(page_title="إمبراطورية التحالف 2026", layout="wide")
+st.title("🏛️ إمبراطورية التحالف: مركز القوى العظمى")
 
 with st.sidebar:
-    st.title("🛡️ مركز القيادة")
-    provider = st.radio("المزود الاستراتيجي:", ["Google Gemini", "العقول الصينية (OpenRouter)"])
-    selected_model = st.selectbox("الموديل:", list(model_map.keys()))
-    selected_expert = st.selectbox("الوكيل التنفيذي:", list(expert_map.keys()))
-    live_search = st.toggle("رادار البحث الحي 📡", value=True)
-    draw_mode = st.toggle("وضعية الرسام (DALL-E 3) 🎨", value=False)
+    st.header("⚙️ لوحة التحكم السيادية")
+    selected_model = st.selectbox("العقل المعالج المتوفر:", list(model_map.keys()))
+    selected_expert = st.selectbox("المستشار المفوض:", list(expert_map.keys()))
+    live_search = st.toggle("رادار البحث اللحظي 📡", value=True)
+    speak_out = st.toggle("نطق الإجابة (عربي) 🗣️", value=False)
+    
     st.divider()
-    if st.button("🗑️ تطهير السجل"):
-        st.session_state.messages = []
-        st.rerun()
+    uploaded_file = st.file_uploader("رفع (Image, PDF)", type=['png', 'jpg', 'jpeg', 'pdf'])
+    
+    st.write("🎤 الأمر الصوتي:")
+    audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إرسال الأمر", key='mic')
 
-# منطقة الإدخال
-text_input = st.chat_input("أصدر أوامرك هنا يا قائد...")
-
-if text_input:
+# --- [5] تنفيذ المعالجة ---
+if prompt := st.chat_input("أصدر أوامرك السيادية..."):
     with st.chat_message("user"):
-        st.markdown(text_input)
+        st.markdown(prompt)
     
     with st.chat_message("assistant"):
-        with st.spinner("جاري المعالجة..."):
-            res = run_engine(text_input)
-            st.markdown(res)
+        img = None
+        pdf_txt = None
+        
+        if uploaded_file:
+            if uploaded_file.type == "application/pdf":
+                pdf_txt = get_pdf_text(uploaded_file)
+                st.info("📄 تمت قراءة الوثيقة بنجاح")
+            else:
+                img = Image.open(uploaded_file)
+                st.image(img, caption="تحليل الصورة المرفقة", width=300)
+
+        with st.spinner("جاري استحضار القوى العظمى..."):
+            response = run_alliance_engine(prompt, image=img, pdf_text=pdf_txt, audio_data=audio['bytes'] if audio else None)
+            st.markdown(response)
+            
+            if speak_out:
+                audio_fp = text_to_speech(response)
+                st.audio(audio_fp, format='audio/mp3')
