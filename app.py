@@ -8,7 +8,7 @@ from streamlit_mic_recorder import mic_recorder
 from PIL import Image
 
 # --- 1. الإعدادات والسمات ---
-st.set_page_config(page_title="منصة مصعب v16.38.0", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="منصة مصعب v16.39.0", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
@@ -24,27 +24,36 @@ GEMINI_KEY = st.secrets.get("GEMINI_API_KEY")
 KIMI_KEY = st.secrets.get("KIMI_API_KEY")
 ERNIE_KEY = st.secrets.get("ERNIE_API_KEY")
 
-# --- 2. محرك التنفيذ وحفظ الملفات (v16.12) ---
+# --- 2. محرك التنفيذ المطور (الحفظ الإجباري v16.39) ---
 def run_execution_logic(text):
     clean_txt = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-    file_match = re.search(r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*content=\{(.*?)\}', text, flags=re.DOTALL)
+    
+    # البحث عن كود بايثون بين علامات التنسيق القياسية
+    code_blocks = re.findall(r'```python(.*?)```', text, flags=re.DOTALL)
+    
     exec_out = ""
-    if file_match:
-        fname, fcontent = file_match.group(1).strip(), file_match.group(2).strip()
-        fcontent = re.sub(r'```python|```', '', fcontent).strip()
-        try:
-            with open(fname, 'w', encoding='utf-8') as f: f.write(fcontent)
-            if fname.endswith('.py'):
+    if code_blocks:
+        for i, code in enumerate(code_blocks):
+            # محاولة استخراج اسم ملف أو استخدام اسم افتراضي
+            name_match = re.search(r'([\w\.-]+\.py)', text)
+            fname = name_match.group(1) if name_match else f"auto_script_{i}.py"
+            
+            try:
+                # إجبار النظام على كتابة الملف في المجلد الحالي
+                with open(fname, 'w', encoding='utf-8') as f:
+                    f.write(code.strip())
+                
+                # تنفيذ الملف
                 res = subprocess.run(['python3', fname], capture_output=True, text=True, timeout=10)
-                exec_out = f"🖥️ ناتج التنفيذ:\n{res.stdout}\n{res.stderr}"
-        except Exception as e: exec_out = f"❌ خطأ: {e}"
+                exec_out += f"✅ تم حفظ {fname}\n🖥️ ناتج التنفيذ:\n{res.stdout}\n{res.stderr}"
+            except Exception as e:
+                exec_out += f"❌ خطأ في {fname}: {e}\n"
+    
     return clean_txt, exec_out
 
-# --- 3. دالة التوجيه الشاملة (التي تدعم القائمة الكاملة) ---
+# --- 3. دالة التوجيه الشاملة ---
 def get_super_response(engine, user_input, persona, image=None, use_search=False):
     client = genai.Client(api_key=GEMINI_KEY)
-    
-    # تحضير أدوات البحث
     search_tool = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
 
     def gemini_router(target_model):
@@ -64,56 +73,37 @@ def get_super_response(engine, user_input, persona, image=None, use_search=False
                 return client.models.generate_content(model=target_model, contents=[user_input]).text
             return f"❌ خطأ: {e}"
 
-    # التوجيه حسب اختيار المحرك من القائمة
     if "gemini" in engine or "gemma" in engine:
         return gemini_router(engine)
-    
     elif "ernie" in engine and ERNIE_KEY:
         try:
             c = OpenAI(api_key=ERNIE_KEY, base_url="https://api.baidu.com/v1")
             res = c.chat.completions.create(model="ernie-5.0", messages=[{"role": "user", "content": user_input}])
             return res.choices[0].message.content
         except: return gemini_router("gemini-2.0-flash")
-
-    elif "deepseek" in engine:
-        try:
-            c = OpenAI(api_key="lm-studio", base_url="http://localhost:1234/v1")
-            res = c.chat.completions.create(model="deepseek-r1", messages=[{"role": "user", "content": user_input}], timeout=5)
-            return res.choices[0].message.content
-        except: return gemini_router("gemini-2.0-flash")
-
     return gemini_router("gemini-2.0-flash")
 
-# --- 4. الواجهة الجانبية (القائمة الكاملة) ---
+# --- 4. الواجهة الجانبية المحدثة ---
 with st.sidebar:
-    st.title("🛡️ تحالف مصعب v16.38")
-    audio = mic_recorder(start_prompt="🎤 تحدث", stop_prompt="إرسال", key='v38_mic')
+    st.title("🛡️ تحالف مصعب v16.39")
+    audio = mic_recorder(start_prompt="🎤 تحدث", stop_prompt="إرسال", key='v39_mic')
     st.divider()
     
-    # تم إضافة المحركات المفقودة هنا بدقة
-    engine_choice = st.selectbox(
-        "🎯 اختر العقل المفكر:", 
-        [
-            "gemini-2.5-flash", 
-            "gemini-2.0-flash",
-            "gemini-3-pro-preview", 
-            "gemma-3-27b", 
-            "deepseek-r1", 
-            "ernie-5.0", 
-            "kimi-latest"
-        ]
-    )
+    # مستعرض الملفات (الميزة التي طلبتها للتأكد من وجود الملفات)
+    st.subheader("📁 مستعرض الملفات:")
+    current_files = [f for f in os.listdir(".") if f.endswith(('.py', '.png', '.csv'))]
+    st.write(current_files)
     
-    persona = st.selectbox("👤 الشخصية:", ["مساعد مبرمج", "مدرس لغات", "المعرفون", "محلل بيانات"])
-    
-    st.write("---")
+    st.divider()
+    engine_choice = st.selectbox("🎯 المحرك:", ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-pro-preview", "gemma-3-27b", "deepseek-r1"])
+    persona = st.selectbox("👤 الشخصية:", ["مساعد مبرمج", "مدرس لغات", "محلل بيانات"])
     web_on = st.toggle("🌐 بحث إنترنت مباشر")
-    uploaded_file = st.file_uploader("🖼️ رفع صورة/ملف:", type=['jpg', 'png', 'jpeg', 'csv'])
+    uploaded_file = st.file_uploader("🖼️ رفع ملف:", type=['jpg', 'png', 'csv'])
     
     if st.button("🗑️ مسح السجل", type="primary"):
         st.session_state.messages = []; st.rerun()
 
-# --- 5. منطق العرض والتنفيذ ---
+# --- 5. منطق العرض ---
 if "messages" not in st.session_state: st.session_state.messages = []
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
@@ -127,9 +117,8 @@ if prompt := st.chat_input("تحدث مع نظامك المتكامل...") or au
         img_obj = None
         if uploaded_file and uploaded_file.type.startswith('image'):
             img_obj = Image.open(uploaded_file)
-            st.markdown('<span class="status-badge">👁️ جاري تحليل الصورة...</span>', unsafe_allow_html=True)
         
-        with st.spinner("جاري التفكير والربط..."):
+        with st.spinner("جاري التفكير..."):
             raw_res = get_super_response(engine_choice, txt, persona, img_obj, web_on)
         
         clean_res, code_res = run_execution_logic(raw_res)
@@ -137,10 +126,7 @@ if prompt := st.chat_input("تحدث مع نظامك المتكامل...") or au
         
         if code_res:
             st.markdown(f'<div class="exec-box">{code_res}</div>', unsafe_allow_html=True)
-        
-        try:
-            tts = gTTS(text=clean_res[:250], lang='ar')
-            b = io.BytesIO(); tts.write_to_fp(b); st.audio(b)
-        except: pass
+            # تحديث القائمة الجانبية بعد خلق ملف جديد
+            st.rerun()
         
         st.session_state.messages.append({"role": "assistant", "content": clean_res})
