@@ -12,9 +12,11 @@ import pdfplumber  # لإضافة ميزة قراءة الـ PDF
 
 # --- [1] الإعدادات الأساسية ومجلس الخبراء ---
 model_map = {
-    "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
-    "Gemini 1.5 Pro": "gemini-1.5-pro",
-    "Gemini 1.5 Flash": "gemini-1.5-flash"
+     "Gemini 1.5 Flash": "models/gemini-1.5-flash", 
+    "Gemini 1.5 Pro": "models/gemini-1.5-pro",
+    "Gemini 2.0 Flash": "models/gemini-2.0-flash-exp", # تأكد من وجود models/ في البداية
+    "DeepSeek V3": "deepseek/deepseek-chat",
+    "DeepSeek R1": "deepseek/deepseek-r1",
 }
 
 expert_map = {
