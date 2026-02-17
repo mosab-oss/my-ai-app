@@ -10,3 +10,4 @@ PyMuPDF
 pdfplumber
 pydub
 ffmpy
+google-generativeai
