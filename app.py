@@ -1,131 +1,117 @@
 import streamlit as st
-# المكتبة الجديدة لدعم Gemini 3 والسرعة القصوى
-from google import genai
-from google.genai import types
-import io, re, os, subprocess, time
+import google.generativeai as genai
+from openai import OpenAI
+import io, re, os, subprocess
 from gtts import gTTS
+from PIL import Image
 from streamlit_mic_recorder import mic_recorder 
 
-# --- 1. إعدادات الواجهة (RTL) ---
-st.set_page_config(page_title="منصة مصعب v16.17.5", layout="wide", page_icon="💎")
+# --- 1. إعدادات الهوية والواجهة (RTL) ---
+st.set_page_config(page_title="منصة مصعب v16.12.0", layout="wide", page_icon="🎙️")
 
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
-    [data-testid="stSidebar"] { background-color: #001529; direction: rtl; }
-    .exec-box { background-color: #000; color: #00ffcc; padding: 15px; border-radius: 10px; border: 1px solid #00ffcc; font-family: monospace; }
-    .stChatFloatingInputContainer { direction: rtl; }
+    /* تنسيق أزرار القائمة الجانبية لتكون واضحة */
+    [data-testid="stSidebar"] { background-color: #0e1117; }
+    .stButton button { width: 100%; border-radius: 10px; font-weight: bold; }
+    .mic-box { border: 2px solid #ff4b4b; padding: 10px; border-radius: 15px; text-align: center; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# جلب المفتاح من Secrets
-API_KEY = st.secrets.get("GEMINI_API_KEY")
+# الربط التقني
+local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
+api_key = st.secrets.get("GEMINI_API_KEY")
+if api_key:
+    genai.configure(api_key=api_key)
 
-# --- 2. محرك التنفيذ الذكي للأكواد (الموجود في v16.14.5) ---
-def execute_logic(text):
-    # تنظيف الرد من وسوم التفكير
-    display_text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-    
-    # البحث عن نمط حفظ الملف SAVE_FILE: name | content={}
-    file_pattern = r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*content=\{(.*?)\}'
-    match = re.search(file_pattern, text, flags=re.DOTALL)
-    
-    exec_output = ""
-    if match:
-        fname, fcontent = match.group(1).strip(), match.group(2).strip()
-        fcontent = re.sub(r'```python|```', '', fcontent).strip()
-        try:
-            with open(fname, 'w', encoding='utf-8') as f: f.write(fcontent)
-            if fname.endswith('.py'):
-                # تنفيذ الكود وجلب النتيجة
-                res = subprocess.run(['python3', fname], capture_output=True, text=True, timeout=10)
-                exec_output = f"🖥️ ناتج التنفيذ:\n{res.stdout}\n{res.stderr}"
-            else:
-                exec_output = f"✅ تم حفظ الملف: {fname}"
-        except Exception as e: exec_output = f"❌ خطأ برمي: {e}"
-    return display_text, exec_output
-
-# --- 3. القائمة الجانبية (كل الميزات + التحالف السداسي) ---
+# --- 2. القائمة الجانبية: مركز التحكم الموحد ---
 with st.sidebar:
-    st.title("🎮 مركز القيادة v16.17.5")
+    st.title("🎮 مركز التحكم")
+    st.write(f"**الإصدار:** v16.12.0")
     
-    # أ. المغرفون
+    # أ. قسم المغرفون (الميكروفون) - في القائمة الجانبية كما طلبت
+    st.markdown('<div class="mic-box">', unsafe_allow_html=True)
     st.subheader("🎤 المغرفون")
-    audio_record = mic_recorder(start_prompt="تحدث الآن", stop_prompt="إرسال", key='v17_mic')
-    
-    st.divider()
+    audio_record = mic_recorder(
+        start_prompt="بدء التكلم", 
+        stop_prompt="إرسال الصوت", 
+        just_once=True, 
+        key='sidebar_mic'
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # ب. المحركات (تشمل Gemini 3 و Kimi و ERNIE)
-    engine_choice = st.selectbox(
-        "🎯 المحرك النشط:", 
-        ["gemini-3-pro-preview", "gemini-3-flash", "gemini-2.0-flash", "deepseek-r1", "kimi-latest", "ernie-4.0"]
+    # ب. مستوى التفكير (Thinking)
+    thinking_level = st.select_slider(
+        "🧠 مستوى التفكير:", 
+        options=["Low", "Medium", "High"], 
+        value="High"
     )
 
-    # ج. مستوى التفكير والشخصية (تشمل مدرس اللغة)
-    thinking_level = st.select_slider("🧠 مستوى التفكير:", ["Low", "Medium", "High"], value="High")
+    # ج. الشخصية (المعرفون)
     persona = st.selectbox(
-        "👤 اختيار الخبير:", 
-        ["المعرفون", "مدرس اللغة (ترجمة وتعليم)", "مساعد مبرمج", "وكيل تنفيذ"]
+        "👤 اختر الشخصية:", 
+        ["المعرفون (أهل العلم)", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"]
     )
-
+    
     st.divider()
     
-    # د. رفع الملفات وأدوات الصيانة
-    uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "txt", "py", "png", "jpg"])
+    # د. المحرك ورفع الملفات
+    engine_choice = st.selectbox("🎯 المحرك:", ["Gemini 2.5 Flash", "Gemini 3 Pro", "DeepSeek R1"])
+    uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "csv", "txt", "jpg", "png", "jpeg"])
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔍 فحص سريع"):
-            try:
-                client = genai.Client(api_key=API_KEY)
-                client.models.get(model=engine_choice)
-                st.toast("✅ المحرك جاهز!")
-            except: st.toast("❌ خطأ في الاتصال")
-    with col2:
-        if st.button("🗑️ مسح المحادثة", type="primary"):
-            st.session_state.messages = []
-            st.rerun()
+    st.divider()
+    
+    # هـ. أدوات الصيانة (فحص الموديلات)
+    st.subheader("🛠️ أدوات الصيانة")
+    if st.button("🔍 فحص الموديلات النشطة", type="primary"):
+        try:
+            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            st.info("النماذج المتاحة لحسابك:")
+            st.code("\n".join(models))
+        except Exception as e: st.error(f"خطأ في الفحص: {e}")
 
-# --- 4. واجهة الدردشة والمعالجة ---
+    if st.button("🗑️ مسح المحادثة"):
+        st.session_state.messages = []
+        st.rerun()
+
+# --- 3. واجهة الدردشة الرئيسية ---
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-prompt = st.chat_input("تحدث مع التحالف العالمي...")
+prompt = st.chat_input("اكتب سؤالك هنا...")
 
-# تفعيل الإدخال (نصي أو صوتي)
-if prompt or audio_record:
-    user_txt = prompt if prompt else "🎤 [أمر صوتي عبر المغرفون]"
+# المعالجة الذكية للمدخلات (نص، صوت، أو ملف)
+if prompt or audio_record or uploaded_file:
+    user_txt = prompt if prompt else "🎤 [رسالة صوتية عبر المغرفون]"
     st.session_state.messages.append({"role": "user", "content": user_txt})
     with st.chat_message("user"): st.markdown(user_txt)
 
     with st.chat_message("assistant"):
         try:
-            client = genai.Client(api_key=API_KEY)
+            model_map = {"Gemini 3 Pro": "models/gemini-3-pro-preview", "Gemini 2.5 Flash": "models/gemini-2.5-flash"}
+            model = genai.GenerativeModel(model_map.get(engine_choice, "models/gemini-2.5-flash"))
             
-            # صياغة التعليمات بناءً على الشخصية ومستوى التفكير
-            instruction = f"بصفتك {persona} وتعمل بمستوى تفكير {thinking_level}. إذا طلب منك كود استخدم SAVE_FILE: name | content={{}}."
+            # دمج التعليمات
+            full_prompt = f"بصفتك {persona} وبمستوى تفكير {thinking_level}: {user_txt}"
+            parts = [full_prompt]
             
-            # طلب الرد من المحرك
-            response = client.models.generate_content(
-                model=engine_choice,
-                contents=user_txt,
-                config=types.GenerateContentConfig(system_instruction=instruction)
-            )
+            if uploaded_file:
+                if uploaded_file.type.startswith("image"): parts.append(Image.open(uploaded_file))
+                else: parts.append(uploaded_file.read().decode())
             
-            # المعالجة: تنظيف النص + تنفيذ الأكواد
-            clean_txt, exec_res = execute_logic(response.text)
-            st.markdown(clean_txt)
-            
-            if exec_res:
-                st.markdown(f'<div class="exec-box">{exec_res}</div>', unsafe_allow_html=True)
+            if audio_record:
+                parts.append({"mime_type": "audio/wav", "data": audio_record['bytes']})
 
-            # هـ. النطق الصوتي (الموجود في v16.14.5)
-            tts = gTTS(text=clean_txt[:250], lang='ar')
+            response = model.generate_content(parts)
+            st.markdown(response.text)
+            
+            # الرد الصوتي الآلي (تكلم المنصة)
+            tts = gTTS(text=response.text[:300], lang='ar')
             audio_fp = io.BytesIO()
             tts.write_to_fp(audio_fp)
             st.audio(audio_fp, format='audio/mp3')
-
-            st.session_state.messages.append({"role": "assistant", "content": clean_txt})
-        except Exception as e:
-            st.error(f"حدث خطأ: {e}")
+            
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
+        except Exception as e: st.error(f"حدث خطأ: {e}")
