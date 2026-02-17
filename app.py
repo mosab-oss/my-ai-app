@@ -3,220 +3,199 @@ import os
 import time
 import io
 import base64
+import requests
 from google import genai
 from google.genai import types
 from openai import OpenAI
 from PIL import Image
 import arabic_reshaper
 from bidi.algorithm import get_display
-import fitz  # مكتبة PyMuPDF لقراءة ملفات PDF
-from gtts import gTTS  # ميزة الرد الصوتي
+import fitz  # PyMuPDF
+from gtts import gTTS
 
-# --- [1] أسطول الموديلات ومجلس الخبراء الكامل ---
+# --- [1] أسطول الموديلات الموحد ---
+# ملاحظة: الموديلات الصينية تعمل عبر OpenRouter لضمان الشمولية
 model_map = {
-    "Gemini 3 Flash": "gemini-3-flash-preview",
-    "Gemini 3 Pro": "gemini-3-pro-preview",
+    "Gemini 1.5 Flash": "gemini-1.5-flash-latest",
     "Gemini 2.5 Pro": "gemini-2.5-pro",
-    "Gemini 1.5 Flash": "gemini-flash-latest"
+    "DeepSeek V3": "deepseek/deepseek-chat",
+    "DeepSeek R1 (Deep Thinking)": "deepseek/deepseek-r1",
+    "Kimi (Moonshot)": "moonshotai/moonshot-v1-8k",
+    "Qwen 2.5 (Alibaba)": "qwen/qwen-2.5-72b-instruct"
 }
 
 expert_map = {
-    "🌍 خبير عام": "أنت مستشار عام ذكي، تجيب بدقة ووضوح ولباقة. تذكر دائماً سياق الحوار السابق.",
-    "💻 خبير تقني": "أنت خبير برمجيات، تركز على الحلول البرمجية واكتشاف الأخطاء وتطوير الأكواد.",
-    "📈 محلل أسواق": "أنت خبير مالي، استخدم البحث الحي لجلب بيانات الذهب والبورصة والعملات وتحليلها.",
-    "📧 مساعد المراسلات": "أنت سكرتير تنفيذي، صغ إيميلات احترافية وردود دبلوماسية بناءً على المعطيات.",
-    "📊 محلل إحصائي": "أنت بروفيسور بيانات، حلل الأرقام والجداول المستخرجة وقدم رؤية إحصائية دقيقة.",
-    "✍️ خبير محتوى": "أنت كاتب محترف، حول الأفكار والمسودات إلى تقارير ومقالات متكاملة.",
-    "📚 خبير لغوي": "أنت بروفيسور لغوي، ركز على النحو والبلاغة العربية والتدقيق اللغوي.",
-    "🛡️ خبير استراتيجي": "أنت محلل استراتيجي جيوسياسي وعسكري، حلل المواقف من منظور قيادي.",
-    "⚖️ مستشار قانوني": "أنت خبير قانوني، مراجع للعقود والوثائق الرسمية والامتثال."
+    "🌍 خبير عام": "أنت مستشار عام ذكي، تجيب بدقة ووضوح ولباقة.",
+    "💻 خبير تقني": "أنت خبير برمجيات، تركز على الحلول البرمجية وتطوير الأكواد.",
+    "📈 محلل أسواق": "أنت خبير مالي، حلل البيانات الاقتصادية وقدم رؤى استثمارية.",
+    "🎨 فنان رقمي": "أنت مصمم خبير، ساعد المستخدم في تخيل الصور ووصفها بدقة للتوليد.",
+    "🛡️ خبير استراتيجي": "أنت محلل استراتيجي جيوسياسي وعسكري، حلل المواقف من منظور قيادي."
 }
 
-# دالة تصحيح عرض اللغة العربية
-def fix_ar(text):
-    try:
-        reshaped_text = arabic_reshaper.reshape(text)
-        return get_display(reshaped_text)
-    except:
-        return text
+if "request_count" not in st.session_state: st.session_state.request_count = 0
+if "messages" not in st.session_state: st.session_state.messages = []
 
-# دالة استخراج النص من ملفات PDF
-def extract_pdf_content(file_bytes):
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+# --- [2] محركات المعالجة الذكية ---
 
-# دالة توليد الرد الصوتي
 def text_to_speech_ar(text):
     try:
         tts = gTTS(text=text, lang='ar')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         return fp
-    except Exception as e:
-        st.error(f"خطأ في توليد الصوت: {e}")
-        return None
+    except: return None
 
-if "request_count" not in st.session_state: st.session_state.request_count = 0
-if "messages" not in st.session_state: st.session_state.messages = []
+def extract_pdf_content(file_bytes):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    return "".join([page.get_text() for page in doc])
 
-# --- [2] إدارة الاتصال والمحرك التنفيذي المطور ---
-def get_gemini_client():
+# ميزة توليد الصور عبر DALL-E 3 (OpenRouter)
+def generate_image(prompt):
     try:
-        return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    except:
-        return None
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=st.secrets["OPENROUTER_API_KEY"])
+        response = client.images.generate(
+            model="openai/dall-e-3",
+            prompt=prompt,
+            n=1, size="1024x1024"
+        )
+        return response.data[0].url
+    except Exception as e:
+        return f"❌ فشل توليد الصورة: {str(e)}"
 
 def run_engine(prompt_data, is_voice=False, image_data=None, pdf_text=None):
-    target_model = model_map.get(selected_model, "gemini-flash-latest")
-    
-    # تحسين أمر البحث الحي لضمان استجابة الرادار
-    search_instruction = "\nاستخدم البحث الحي (Google Search) دائماً للحصول على أدق المعلومات الحالية." if live_search else ""
+    target_model_id = model_map.get(selected_model)
+    search_instruction = "\nاستخدم البحث الحي دائماً." if live_search else ""
     expert_instruction = expert_map.get(selected_expert, "خبير عام") + search_instruction
 
     try:
+        # مسار Google Gemini
         if provider == "Google Gemini":
-            client = get_gemini_client()
-            if not client: return "🚨 فشل في الاتصال بالخادم."
-
-            # تقليل سياق الذاكرة لتقليل ضغط الـ 429
+            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
             history = []
-            for msg in st.session_state.messages[-3:]: 
+            for msg in st.session_state.messages[-3:]:
                 role = "user" if msg["role"] == "user" else "model"
                 history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
 
             config = types.GenerateContentConfig(
                 system_instruction=expert_instruction,
                 tools=[types.Tool(google_search=types.GoogleSearch())] if live_search else None,
-                temperature=0.3 # تقليل الحرارة لزيادة دقة البحث الحي
+                temperature=0.3
             )
-
+            
             content_list = []
-            if pdf_text:
-                content_list.append(f"محتوى مستند PDF المرفق:\n{pdf_text}\n\nالسؤال المطلوب حول المستند:")
-            if image_data and not pdf_text:
-                content_list.append(Image.open(image_data))
+            if pdf_text: content_list.append(f"محتوى الـ PDF:\n{pdf_text}")
+            if image_data: content_list.append(Image.open(image_data))
             
             if is_voice:
                 content_list.append(types.Part.from_bytes(data=prompt_data['bytes'], mime_type="audio/wav"))
             else:
                 content_list.append(prompt_data)
 
-            # تشغيل الجلسة
-            chat = client.chats.create(model=target_model, config=config, history=history)
+            chat = client.chats.create(model=target_model_id, config=config, history=history)
             response = chat.send_message(content_list)
-            
-            st.session_state.request_count += 1 
+            st.session_state.request_count += 1
             return response.text
 
-        elif provider == "DeepSeek AI":
-            client = OpenAI(api_key=st.secrets.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
-            ds_messages = [{"role": "system", "content": expert_instruction}]
-            for msg in st.session_state.messages[-5:]:
-                ds_messages.append({"role": msg["role"], "content": msg["content"]})
-            ds_messages.append({"role": "user", "content": str(prompt_data)})
+        # مسار العقول الصينية (OpenRouter)
+        else:
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=st.secrets["OPENROUTER_API_KEY"])
+            messages = [{"role": "system", "content": expert_instruction}]
+            for msg in st.session_state.messages[-3:]:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+            
+            user_msg = "[أمر صوتي]" if is_voice else str(prompt_data)
+            messages.append({"role": "user", "content": user_msg})
 
-            response = client.chat.completions.create(model="deepseek-chat", messages=ds_messages)
+            response = client.chat.completions.create(model=target_model_id, messages=messages)
             st.session_state.request_count += 1
             return response.choices[0].message.content
 
     except Exception as e:
-        if "429" in str(e):
-            return "🚫 وصلت للحد الأقصى للطلبات المجانية حالياً. يرجى الانتظار دقيقة واحدة ثم إعادة المحاولة."
+        if "402" in str(e): return "❌ رصيد العقول الصينية غير كافٍ. يرجى الشحن أو استخدام Gemini."
         return f"❌ خطأ تقني: {str(e)}"
 
-# --- [3] واجهة المستخدم الاحترافية ---
+# --- [3] الواجهة الرسومية ---
 st.set_page_config(page_title="إمبراطورية التحالف 2026", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #0e1117; color: #ffffff !important; direction: rtl; text-align: right; }
-    .stChatMessage { background-color: #262730 !important; border-right: 5px solid #007bff !important; border-radius: 15px !important; color: #ffffff !important; margin-bottom: 10px; }
-    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { color: #ffffff !important; }
-    .stDownloadButton button { background-color: #155724 !important; color: #d4edda !important; border: 1px solid #c3e6cb !important; font-weight: bold !important; }
+    .stApp { background-color: #0e1117; color: #ffffff; direction: rtl; text-align: right; }
+    .stChatMessage { background-color: #262730 !important; border-radius: 15px; border-right: 5px solid #007bff; }
     </style>
-    """, unsafe_allow_html=True) 
+    """, unsafe_allow_html=True)
 
 with st.sidebar:
     st.title("🛡️ مركز القيادة")
     st.progress(min(st.session_state.request_count / 50, 1.0))
-    st.caption(f"الطلبات الناجحة: {st.session_state.request_count} / 50")
-    
     st.divider()
-    provider = st.radio("المزود الاستراتيجي:", ["Google Gemini", "DeepSeek AI"])
-    selected_model = st.selectbox("الموديل:", list(model_map.keys()), index=0)
+    provider = st.radio("المزود الاستراتيجي:", ["Google Gemini", "العقول الصينية (OpenRouter)"])
+    
+    # تصفية الموديلات حسب المزود
+    if provider == "Google Gemini":
+        available_models = ["Gemini 1.5 Flash", "Gemini 2.5 Pro"]
+    else:
+        available_models = ["DeepSeek V3", "DeepSeek R1 (Deep Thinking)", "Kimi (Moonshot)", "Qwen 2.5 (Alibaba)"]
+    
+    selected_model = st.selectbox("الموديل:", available_models)
     selected_expert = st.selectbox("الوكيل التنفيذي:", list(expert_map.keys()))
     
     st.divider()
     live_search = st.toggle("رادار البحث الحي 📡", value=True)
-    speak_response = st.toggle("نطق الإجابة آلياً 🔊", value=True)
-    uploaded_file = st.file_uploader("📦 رفع (PNG, JPG, PDF)", type=['png', 'jpg', 'jpeg', 'pdf'])
-    
-    if st.button("🗑️ تطهير السجل"):
-        st.session_state.messages = []
-        st.rerun()
+    speak_response = st.toggle("نطق الإجابة 🔊", value=True)
+    draw_mode = st.toggle("وضعية الرسام (DALL-E 3) 🎨", value=False)
+    uploaded_file = st.file_uploader("📦 رفع ملفات", type=['png', 'jpg', 'pdf'])
 
-# عرض الرسائل
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]): 
+    with st.chat_message(m["role"]):
         st.markdown(m["content"])
-        if m["role"] == "assistant" and "audio" in m:
-            st.audio(m["audio"], format="audio/mp3")
+        if "audio" in m: st.audio(m["audio"], format="audio/mp3")
 
-# --- [4] منطقة الإدخال الذكية ---
+# --- [4] التفاعل الذكي ---
 from streamlit_mic_recorder import mic_recorder
 col_mic, col_txt = st.columns([1, 10])
+with col_mic: audio = mic_recorder(start_prompt="🎤", stop_prompt="📤", key='mic')
+with col_txt: text_input = st.chat_input("أصدر أوامرك...")
 
-with col_mic:
-    audio = mic_recorder(start_prompt="🎤", stop_prompt="📤", key='unified_mic_v7')
-
-with col_txt:
-    text_input = st.chat_input("أصدر أوامرك هنا يا قائد...")
-
-input_val = None
-voice_flag = False
-
-if audio:
-    input_val, voice_flag = audio, True
-elif text_input:
-    input_val = text_input
+input_val = audio if audio else text_input
+voice_flag = True if audio else False
 
 if input_val:
+    # معالجة PDF
     pdf_text = None
     if uploaded_file and uploaded_file.type == "application/pdf":
-        with st.spinner("جاري مسح المستند ضوئياً..."):
-            pdf_text = extract_pdf_content(uploaded_file.read())
+        pdf_text = extract_pdf_content(uploaded_file.read())
 
+    # عرض مدخلات المستخدم
     label = "🎤 [أمر صوتي]" if voice_flag else input_val
     st.session_state.messages.append({"role": "user", "content": label})
-    
     with st.chat_message("user"):
         st.markdown(label)
-        if uploaded_file and uploaded_file.type != "application/pdf": 
-            st.image(uploaded_file, width=300)
+        if uploaded_file and uploaded_file.type != "application/pdf": st.image(uploaded_file, width=300)
 
+    # رد المساعد
     with st.chat_message("assistant"):
-        # إظهار حالة البحث الحي إذا كان مفعلاً
-        if live_search:
-            with st.status("📡 جاري تشغيل الرادار والبحث في الويب...", expanded=True) as status:
-                st.write("🔍 جاري جلب المعلومات اللحظية...")
-                res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
-                status.update(label="✅ تم اكتمال البحث والتحليل!", state="complete", expanded=False)
+        # حالة 1: وضعية الرسم
+        if draw_mode:
+            with st.spinner("🎨 جاري رسم خيالك..."):
+                img_url = generate_image(str(input_val))
+                if img_url.startswith("http"):
+                    st.image(img_url, caption="تم التوليد بواسطة التحالف")
+                    res = "تم إنتاج الصورة بنجاح."
+                else: res = img_url
+                st.markdown(res)
+        # حالة 2: المعالجة النصية / البحث
         else:
-            with st.spinner(f"جاري التنفيذ بواسطة {selected_expert}..."):
+            with st.status("📡 جاري المعالجة والتحليل...") as status:
                 res = run_engine(input_val, is_voice=voice_flag, image_data=uploaded_file, pdf_text=pdf_text)
-        
-        st.markdown(res)
-        
-        # معالجة الصوت
+                status.update(label="✅ اكتملت المهمة", state="complete")
+            st.markdown(res)
+
+        # الصوت والحفظ
         msg_data = {"role": "assistant", "content": res}
         if speak_response:
             audio_fp = text_to_speech_ar(res)
             if audio_fp:
-                st.audio(audio_fp, format="audio/mp3")
+                st.audio(audio_fp)
                 msg_data["audio"] = audio_fp
         
         st.session_state.messages.append(msg_data)
-        st.download_button("💾 تصدير التقرير التنفيذي", res, file_name="alliance_empire_report.txt")
