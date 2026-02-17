@@ -5,104 +5,79 @@ from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder 
 
-# --- 1. إعدادات الهوية والواجهة ---
-st.set_page_config(page_title="منصة مصعب v16.12.1", layout="wide", page_icon="🎙️")
+# --- 1. الإعدادات والربط ---
+st.set_page_config(page_title="منصة مصعب v16.12.2", layout="wide")
 
-st.markdown("""
-    <style>
-    .stApp { direction: rtl; text-align: right; }
-    .stButton button { width: 100%; border-radius: 10px; font-weight: bold; }
-    .mic-box { border: 2px solid #ff4b4b; padding: 10px; border-radius: 15px; text-align: center; margin-bottom: 20px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# الربط التقني
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# --- 2. إدارة الذاكرة والسياق (Context Handling) ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# تحويل تاريخ المحادثة إلى تنسيق يفهمه Gemini
-def get_gemini_history():
-    history = []
-    for msg in st.session_state.messages:
-        role = "model" if msg["role"] == "assistant" else "user"
-        history.append({"role": role, "parts": [msg["content"]]})
-    return history
+# --- 2. دالة جلب السياق (لأنك طلبت معرفة السياق) ---
+def get_history():
+    return [{"role": "user" if m["role"] == "user" else "model", 
+             "parts": [m["content"]]} for m in st.session_state.messages]
 
-# --- 3. القائمة الجانبية ---
+# --- 3. الواجهة الجانبية ---
 with st.sidebar:
-    st.title("🎮 مركز التحكم")
-    
-    st.markdown('<div class="mic-box">', unsafe_allow_html=True)
-    st.subheader("🎤 المغرفون")
-    audio_record = mic_recorder(start_prompt="بدء التكلم", stop_prompt="إرسال الصوت", just_once=True, key='sidebar_mic')
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    thinking_level = st.select_slider("🧠 مستوى التفكير:", options=["Low", "Medium", "High"], value="High")
-    persona = st.selectbox("👤 اختر الشخصية:", ["المعرفون (أهل العلم)", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"])
+    st.title("🌐 وضع البث المعلوماتي")
+    web_search_on = st.toggle("تفعيل البحث في الإنترنت (Live)", value=True)
+    engine_choice = st.selectbox("المحرك:", ["gemini-2.0-flash", "gemini-1.5-flash"])
+    persona = st.selectbox("الشخصية:", ["المعرفون", "خبير التقنية", "مساعد مبرمج"])
     
     st.divider()
-    engine_choice = st.selectbox("🎯 المحرك:", ["Gemini 2.0 Flash", "Gemini 1.5 Pro"])
-    uploaded_file = st.file_uploader("📂 رفع الملفات:", type=["pdf", "txt", "jpg", "png", "jpeg"])
-    
-    if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
+    audio_record = mic_recorder(start_prompt="🎤 تكلم الآن", stop_prompt="✅ إرسال", just_once=True)
 
-# --- 4. واجهة الدردشة والعرض ---
+# --- 4. معالجة الدردشة ---
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-prompt = st.chat_input("اكتب سؤالك هنا...")
+prompt = st.chat_input("اسأل عن أي شيء مباشر من الإنترنت...")
 
-# معالجة المدخلات
 if prompt or audio_record:
     user_txt = prompt if prompt else "🎤 [رسالة صوتية]"
-    
-    # عرض رسالة المستخدم فوراً
     st.session_state.messages.append({"role": "user", "content": user_txt})
-    with st.chat_message("user"):
-        st.markdown(user_txt)
+    with st.chat_message("user"): st.markdown(user_txt)
 
-    # --- البدء في التوليد بنظام البث (Streaming) ---
     with st.chat_message("assistant"):
+        res_placeholder = st.empty()
+        full_res = ""
+        
+        # تفعيل أدوات البحث إذا كان الخيار مفعلاً
+        tools = [{"google_search_retrieval": {}}] if web_search_on else []
+        
         try:
-            # إعداد الموديل مع السياق
-            model_name = "gemini-2.0-flash" if "2.0" in engine_choice else "gemini-1.5-pro"
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(
+                model_name=engine_choice,
+                tools=tools # هنا دمجنا "البث المباشر من الإنترنت"
+            )
             
-            # بدء جلسة محادثة تحتوي على التاريخ السابق (السياق)
-            chat_session = model.start_chat(history=get_gemini_history())
+            # بدء المحادثة مع السياق (History)
+            chat = model.start_chat(history=get_history())
             
-            # تعليمات النظام (System Instructions) مدمجة في الطلب
-            instruction = f"بصفتك {persona} وبمستوى تفكير {thinking_level}: "
+            # الطلب مع التفكير والشخصية
+            full_prompt = f"بصفتك {persona}، أجب بذكاء: {user_txt}"
             
-            # تنفيذ البث
-            response_placeholder = st.empty() # مكان فارغ لتحديث النص كلمة بكلمة
-            full_response = ""
-            
-            # إرسال الطلب بنظام البث
-            response = chat_session.send_message(instruction + user_txt, stream=True)
+            # البث (Streaming)
+            response = chat.send_message(full_prompt, stream=True)
             
             for chunk in response:
-                full_response += chunk.text
-                response_placeholder.markdown(full_response + "▌") # تأثير الكتابة
+                if chunk.text:
+                    full_res += chunk.text
+                    res_placeholder.markdown(full_res + "▌")
             
-            response_placeholder.markdown(full_response) # النص النهائي
+            res_placeholder.markdown(full_res)
             
-            # الرد الصوتي (اختياري)
-            tts = gTTS(text=full_response[:200], lang='ar')
+            # حفظ الرد في السياق
+            st.session_state.messages.append({"role": "assistant", "content": full_res})
+            
+            # صوت اختياري
+            tts = gTTS(text=full_res[:200], lang='ar')
             audio_fp = io.BytesIO()
             tts.write_to_fp(audio_fp)
             st.audio(audio_fp)
-            
-            # حفظ الرد في الذاكرة
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+
         except Exception as e:
-            st.error(f"حدث خطأ في الاتصال: {e}")
+            st.error(f"عذراً، حدث خطأ: {e}")
