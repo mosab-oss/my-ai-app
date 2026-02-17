@@ -8,3 +8,5 @@ arabic-reshaper
 python-bidi
 PyMuPDF
 pdfplumber
+pydub
+ffmpy
