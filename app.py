@@ -1,9 +1,8 @@
-import streamlit as st
+from openai import OpenAI
+import io, re, os, subprocessimport streamlit as st
 from google import genai
 from google.genai import types
-import google.generativeai as genai
-from openai import OpenAI
-import io, re, os, subprocess
+import os
 from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder 
