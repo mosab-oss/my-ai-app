@@ -1,133 +1,146 @@
 import streamlit as st
-import google.generativeai as genai
-import os
-from PIL import Image
-from streamlit_mic_recorder import mic_recorder
+from google import genai
+from google.genai import types
+from openai import OpenAI  
+import io, re, os, subprocess, time
 from gtts import gTTS
-import io
-import urllib.parse
-import re
+from streamlit_mic_recorder import mic_recorder 
+from PIL import Image
 
-# 1. إعدادات الصفحة والاتصال
-st.set_page_config(page_title="منصة مصعب الشاملة", layout="wide", page_icon="💎")
+# --- 1. الإعدادات والسمات ---
+st.set_page_config(page_title="منصة مصعب v16.38.0", layout="wide", page_icon="🛡️")
 
-# جلب المفتاح من Secrets (كما في صورتك رقم 9 ورقم 13)
-api_key = st.secrets.get("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-else:
-    st.error("⚠️ المفتاح غير موجود في Secrets!")
-    st.stop()
+st.markdown("""
+    <style>
+    .stApp { direction: rtl; text-align: right; background-color: #0e1117; color: white; }
+    [data-testid="stSidebar"] { background-color: #000c18; border-left: 2px solid #00d4ff; }
+    .exec-box { background-color: #000; color: #00ffcc; padding: 15px; border-radius: 10px; border: 1px solid #00ffcc; font-family: monospace; }
+    .status-badge { background-color: #1a1a1a; color: #00d4ff; border: 1px solid #00d4ff; padding: 2px 10px; border-radius: 20px; font-size: 12px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# دالة الرسم الإبداعي (لتحويل نصوص Gemma 3 لصور حقيقية)
-def draw_image(description):
-    encoded = urllib.parse.quote(description)
-    return f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&seed=42"
+# جلب المفاتيح السرية
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY")
+KIMI_KEY = st.secrets.get("KIMI_API_KEY")
+ERNIE_KEY = st.secrets.get("ERNIE_API_KEY")
 
-# 2. القائمة الجانبية: التخصصات والأدوات
-with st.sidebar:
-    st.header("⚙️ إعدادات المساعد")
+# --- 2. محرك التنفيذ وحفظ الملفات (v16.12) ---
+def run_execution_logic(text):
+    clean_txt = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    file_match = re.search(r'SAVE_FILE:\s*([\w\.-]+)\s*\|\s*content=\{(.*?)\}', text, flags=re.DOTALL)
+    exec_out = ""
+    if file_match:
+        fname, fcontent = file_match.group(1).strip(), file_match.group(2).strip()
+        fcontent = re.sub(r'```python|```', '', fcontent).strip()
+        try:
+            with open(fname, 'w', encoding='utf-8') as f: f.write(fcontent)
+            if fname.endswith('.py'):
+                res = subprocess.run(['python3', fname], capture_output=True, text=True, timeout=10)
+                exec_out = f"🖥️ ناتج التنفيذ:\n{res.stdout}\n{res.stderr}"
+        except Exception as e: exec_out = f"❌ خطأ: {e}"
+    return clean_txt, exec_out
+
+# --- 3. دالة التوجيه الشاملة (التي تدعم القائمة الكاملة) ---
+def get_super_response(engine, user_input, persona, image=None, use_search=False):
+    client = genai.Client(api_key=GEMINI_KEY)
     
-    # ميزة اختيار التخصص
-    persona = st.selectbox(
-        "اختر تخصص المساعد:",
-        ["مساعد ذكي عام", "خبير برمجة وتطوير", "مدرس لغات محترف", "مصمم صور إبداعي"]
+    # تحضير أدوات البحث
+    search_tool = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+
+    def gemini_router(target_model):
+        try:
+            contents = [user_input]
+            if image: contents.append(image)
+            config = types.GenerateContentConfig(system_instruction=f"أنت {persona}", tools=search_tool)
+            r = client.models.generate_content(model=target_model, contents=contents, config=config)
+            return r.text
+        except Exception as e:
+            if "429" in str(e):
+                p = st.empty()
+                for i in range(25, 0, -1):
+                    p.warning(f"⏳ زحام! انتظر {i} ثانية...")
+                    time.sleep(1)
+                p.empty()
+                return client.models.generate_content(model=target_model, contents=[user_input]).text
+            return f"❌ خطأ: {e}"
+
+    # التوجيه حسب اختيار المحرك من القائمة
+    if "gemini" in engine or "gemma" in engine:
+        return gemini_router(engine)
+    
+    elif "ernie" in engine and ERNIE_KEY:
+        try:
+            c = OpenAI(api_key=ERNIE_KEY, base_url="https://api.baidu.com/v1")
+            res = c.chat.completions.create(model="ernie-5.0", messages=[{"role": "user", "content": user_input}])
+            return res.choices[0].message.content
+        except: return gemini_router("gemini-2.0-flash")
+
+    elif "deepseek" in engine:
+        try:
+            c = OpenAI(api_key="lm-studio", base_url="http://localhost:1234/v1")
+            res = c.chat.completions.create(model="deepseek-r1", messages=[{"role": "user", "content": user_input}], timeout=5)
+            return res.choices[0].message.content
+        except: return gemini_router("gemini-2.0-flash")
+
+    return gemini_router("gemini-2.0-flash")
+
+# --- 4. الواجهة الجانبية (القائمة الكاملة) ---
+with st.sidebar:
+    st.title("🛡️ تحالف مصعب v16.38")
+    audio = mic_recorder(start_prompt="🎤 تحدث", stop_prompt="إرسال", key='v38_mic')
+    st.divider()
+    
+    # تم إضافة المحركات المفقودة هنا بدقة
+    engine_choice = st.selectbox(
+        "🎯 اختر العقل المفكر:", 
+        [
+            "gemini-2.5-flash", 
+            "gemini-2.0-flash",
+            "gemini-3-pro-preview", 
+            "gemma-3-27b", 
+            "deepseek-r1", 
+            "ernie-5.0", 
+            "kimi-latest"
+        ]
     )
     
-    persona_instr = {
-        "خبير برمجة وتطوير": "أنت خبير برمجة. قدم حلولاً برمجية واضحة واشرح الكود بالعربي.",
-        "مدرس لغات محترف": "أنت مدرس لغات. صحح القواعد وساعد في تعلم كلمات جديدة.",
-        "مصمم صور إبداعي": "أنت فنان رقمي. ركز على الوصف البصري لإنتاج أفضل الصور.",
-        "مساعد ذكي عام": "أنت مساعد شامل تجيب بدقة على كافة الأسئلة."
-    }
-
-    st.divider()
-    st.subheader("🎙️ التسجيل الصوتي")
-    audio_record = mic_recorder(start_prompt="تحدث 🎤", stop_prompt="إرسال 📤", key='recorder')
+    persona = st.selectbox("👤 الشخصية:", ["مساعد مبرمج", "مدرس لغات", "المعرفون", "محلل بيانات"])
     
-    st.divider()
-    uploaded_file = st.file_uploader("رفع صورة:", type=["jpg", "png", "jpeg"])
+    st.write("---")
+    web_on = st.toggle("🌐 بحث إنترنت مباشر")
+    uploaded_file = st.file_uploader("🖼️ رفع صورة/ملف:", type=['jpg', 'png', 'jpeg', 'csv'])
     
-    if st.button("🗑️ مسح الذاكرة"):
-        st.session_state.messages = []
-        st.rerun()
+    if st.button("🗑️ مسح السجل", type="primary"):
+        st.session_state.messages = []; st.rerun()
 
-# 3. الواجهة الرئيسية
-st.title(f"💎 {persona}")
+# --- 5. منطق العرض والتنفيذ ---
+if "messages" not in st.session_state: st.session_state.messages = []
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]): st.markdown(m["content"])
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "img_url" in msg: st.image(msg["img_url"])
-
-# 4. نظام "الانتقال التلقائي" المطور (يضم Gemma 3 و Gemini 2.5)
-def generate_smart_response(contents):
-    # ترتيب الموديلات حسب القوة والاستجابة في حسابك (صور 15 و 16)
-    model_hierarchy = [
-        "gemini-3-pro-preview",   # الأقوى (صورة 15)
-        "gemma-3-27b-it",         # المستجيب الجديد (صورة 17)
-        "gemini-2.5-flash-exp",   # المحلل البصري الرائع (صورة 16)
-        "gemini-1.5-flash"        # المنقذ السريع
-    ]
-    
-    for m_name in model_hierarchy:
-        try:
-            model = genai.GenerativeModel(m_name)
-            response = model.generate_content(contents)
-            if response and response.text:
-                return response.text, m_name
-        except Exception as e:
-            # الانتقال للموديل التالي عند حدوث خطأ 429 (صورة 12)
-            continue
-    return None, None
-
-# 5. معالجة المدخلات
-user_input = st.chat_input("اطلب ما تشاء...")
-current_audio = audio_record['bytes'] if audio_record else None
-
-if user_input or current_audio or uploaded_file:
-    prompt = user_input if user_input else "حلل المحتوى المرفق"
-    with st.chat_message("user"):
-        st.markdown(prompt)
-        if uploaded_file: st.image(uploaded_file, width=300)
+if prompt := st.chat_input("تحدث مع نظامك المتكامل...") or audio:
+    txt = prompt if prompt else "🎤 [رسالة صوتية]"
+    st.session_state.messages.append({"role": "user", "content": txt})
+    with st.chat_message("user"): st.markdown(txt)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"جاري البحث عن محرك متاح للرد كـ {persona}..."):
-            
-            # دمج التخصص مع الطلب
-            full_prompt = f"تعليماتك: {persona_instr[persona]}\n\nطلب المستخدم: {prompt}"
-            
-            contents = [full_prompt]
-            if uploaded_file: contents.append(Image.open(uploaded_file))
-            if current_audio: contents.append({"mime_type": "audio/wav", "data": current_audio})
-            
-            raw_text, used_model = generate_smart_response(contents)
-            
-            if raw_text:
-                # تنظيف النص من أفكار الموديل (Thought)
-                clean_answer = re.sub(r'\{.*?\}', '', raw_text, flags=re.DOTALL)
-                clean_answer = re.sub(r'thought:.*', '', clean_answer, flags=re.IGNORECASE).strip()
-
-                # ميزة الرسم التلقائي (تعمل مع كل الموديلات)
-                img_url = None
-                if any(x in prompt for x in ["ارسم", "صورة", "تخيل"]) or persona == "مصمم صور إبداعي":
-                    img_url = draw_image(prompt)
-                    st.image(img_url, caption=f"تم التوليد بواسطة {used_model}")
-
-                st.markdown(clean_answer)
-                st.caption(f"🚀 المحرك النشط الآن: {used_model}")
-                
-                # الرد الصوتي
-                try:
-                    tts = gTTS(text=clean_answer[:200], lang='ar')
-                    audio_fp = io.BytesIO()
-                    tts.write_to_fp(audio_fp)
-                    st.audio(audio_fp, autoplay=True)
-                except: pass
-                
-                st.session_state.messages.append({"role": "assistant", "content": clean_answer, "img_url": img_url})
-            else:
-                st.error("❌ عذراً مصعب، جميع المحركات (3.0, Gemma 3, 2.5) مشغولة حالياً.")
+        img_obj = None
+        if uploaded_file and uploaded_file.type.startswith('image'):
+            img_obj = Image.open(uploaded_file)
+            st.markdown('<span class="status-badge">👁️ جاري تحليل الصورة...</span>', unsafe_allow_html=True)
+        
+        with st.spinner("جاري التفكير والربط..."):
+            raw_res = get_super_response(engine_choice, txt, persona, img_obj, web_on)
+        
+        clean_res, code_res = run_execution_logic(raw_res)
+        st.markdown(clean_res)
+        
+        if code_res:
+            st.markdown(f'<div class="exec-box">{code_res}</div>', unsafe_allow_html=True)
+        
+        try:
+            tts = gTTS(text=clean_res[:250], lang='ar')
+            b = io.BytesIO(); tts.write_to_fp(b); st.audio(b)
+        except: pass
+        
+        st.session_state.messages.append({"role": "assistant", "content": clean_res})
