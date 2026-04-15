@@ -1,47 +1,66 @@
 import streamlit as st
 import google.generativeai as genai
 from openai import OpenAI
-import io, requests, base64
+import io, requests, base64, time
 from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder
 
-st.set_page_config(page_title="منصة مصعب v18", layout="wide", page_icon="🎤")
+# --- 1. الإعدادات ---
+st.set_page_config(page_title="منصة مصعب v18.1", layout="wide", page_icon="🎤")
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
-    section[data-testid="stSidebar"] { direction: rtl; text-align: right; background-color: #111; }
+    section[data-testid="stSidebar"] {
+        direction: rtl; text-align: right; background-color: #111;
+    }
     .stSelectbox label, .stSlider label { color: #00ffcc !important; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- مفاتيح API ---
-api_key = st.secrets.get("GEMINI_API_KEY")
-openai_key = st.secrets.get("OPENAI_API_KEY")
-hf_key = st.secrets.get("HF_API_KEY")
-stability_key = st.secrets.get("STABILITY_API_KEY")
+# --- 2. مفاتيح API ---
+api_key       = st.secrets.get("GEMINI_API_KEY")
+openai_key    = st.secrets.get("OPENAI_API_KEY")
+hf_key        = st.secrets.get("HF_API_KEY")
+together_key  = st.secrets.get("TOGETHER_API_KEY")
+ideogram_key  = st.secrets.get("IDEOGRAM_API_KEY")
 
-if api_key:
-    genai.configure(api_key=api_key)
+if not api_key:
+    st.error("⚠️ مفتاح GEMINI_API_KEY غير موجود في الإعدادات!")
+    st.stop()
 
+genai.configure(api_key=api_key)
+
+# --- 3. قوائم النماذج ---
 MODEL_MAP = {
-    "Gemini 2.5 Flash": "models/gemini-2.5-flash",
-    "Gemini 2.5 Pro":   "models/gemini-2.5-pro-preview-03-25",
+    "Gemini 2.5 Flash":    "models/gemini-2.5-flash",
+    "Gemini 2.5 Pro":      "models/gemini-2.5-pro-preview-03-25",
     "DeepSeek R1 (محلي)": "deepseek-r1",
 }
 
-# نماذج الرسم
 IMAGE_MODELS = {
-    "DALL·E 3 (OpenAI)":         "dalle3",
+    "Flux-Dev (Hugging Face) ✅": "flux-dev",
+    "DALL·E 3 (OpenAI)":          "dalle3",
+    "Flux-Pro (Together AI)":     "flux-pro",
     "Stable Diffusion XL":        "sdxl",
-    "Flux-Dev (Hugging Face)":    "flux-dev",
-    "Flux-Pro (API)":             "flux-pro",
     "Ideogram v2":                "ideogram",
 }
 
-# --- دوال توليد الصور ---
+STYLE_MAP = {
+    "واقعي":       "photorealistic, ultra detailed, high quality",
+    "كرتوني":      "cartoon style, colorful, flat design",
+    "زيتي":        "oil painting style, textured, classical",
+    "خيال علمي":   "sci-fi, futuristic, neon lights",
+    "أنيمي":       "anime style, manga illustration",
+    "رسم بالقلم":  "pencil sketch, detailed line art",
+    "مائي":        "watercolor painting, soft colors",
+}
+
+# --- 4. دوال توليد الصور ---
 
 def generate_dalle(prompt):
+    if not openai_key:
+        raise Exception("مفتاح OPENAI_API_KEY غير موجود في الإعدادات")
     client = OpenAI(api_key=openai_key)
     response = client.images.generate(
         model="dall-e-3",
@@ -50,40 +69,78 @@ def generate_dalle(prompt):
         quality="standard",
         n=1,
     )
-    return response.data[0].url
+    return "url", response.data[0].url
+
 
 def generate_sdxl(prompt):
-    """Stable Diffusion XL عبر Hugging Face"""
-    headers = {"Authorization": f"Bearer {hf_key}"}
-    payload = {"inputs": prompt}
+    if not hf_key:
+        raise Exception("مفتاح HF_API_KEY غير موجود في الإعدادات")
+    headers = {
+        "Authorization": f"Bearer {hf_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "num_inference_steps": 30,
+            "guidance_scale": 7.5,
+        }
+    }
     response = requests.post(
         "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
         headers=headers,
         json=payload,
-        timeout=60
+        timeout=120
     )
-    if response.status_code == 200:
-        return response.content  # bytes
-    raise Exception(f"خطأ: {response.text}")
+    content_type = response.headers.get("Content-Type", "")
+    if content_type.startswith("image"):
+        return "bytes", response.content
+    try:
+        error = response.json()
+        if "estimated_time" in error:
+            wait = int(error["estimated_time"]) + 5
+            raise Exception(f"⏳ النموذج يتحمّل، انتظر {wait} ثانية ثم أعد المحاولة")
+        raise Exception(f"خطأ من Hugging Face: {error.get('error', response.text)}")
+    except Exception as e:
+        raise e
+
 
 def generate_flux_dev(prompt):
-    """Flux-Dev عبر Hugging Face"""
-    headers = {"Authorization": f"Bearer {hf_key}"}
+    if not hf_key:
+        raise Exception("مفتاح HF_API_KEY غير موجود في الإعدادات")
+    headers = {
+        "Authorization": f"Bearer {hf_key}",
+        "Content-Type": "application/json"
+    }
     payload = {"inputs": prompt}
-    response = requests.post(
-        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
-        headers=headers,
-        json=payload,
-        timeout=90
-    )
-    if response.status_code == 200:
-        return response.content
-    raise Exception(f"خطأ: {response.text}")
+    for attempt in range(3):
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        content_type = response.headers.get("Content-Type", "")
+        if content_type.startswith("image"):
+            return "bytes", response.content
+        try:
+            error = response.json()
+            if "estimated_time" in error and attempt < 2:
+                wait = int(error["estimated_time"]) + 5
+                st.toast(f"⏳ النموذج يتحمّل... انتظر {wait} ثانية")
+                time.sleep(wait)
+                continue
+            raise Exception(f"خطأ: {error.get('error', response.text)}")
+        except Exception as e:
+            raise e
+    raise Exception("فشل بعد 3 محاولات، حاول لاحقاً")
+
 
 def generate_flux_pro(prompt):
-    """Flux-Pro عبر Together AI"""
+    if not together_key:
+        raise Exception("مفتاح TOGETHER_API_KEY غير موجود في الإعدادات")
     headers = {
-        "Authorization": f"Bearer {st.secrets.get('TOGETHER_API_KEY')}",
+        "Authorization": f"Bearer {together_key}",
         "Content-Type": "application/json"
     }
     payload = {
@@ -93,16 +150,22 @@ def generate_flux_pro(prompt):
         "steps": 28, "n": 1,
         "response_format": "b64_json"
     }
-    r = requests.post("https://api.together.xyz/v1/images/generations",
-                      headers=headers, json=payload, timeout=120)
+    r = requests.post(
+        "https://api.together.xyz/v1/images/generations",
+        headers=headers, json=payload, timeout=120
+    )
     data = r.json()
+    if "error" in data:
+        raise Exception(f"خطأ Together AI: {data['error']}")
     img_bytes = base64.b64decode(data["data"][0]["b64_json"])
-    return img_bytes
+    return "bytes", img_bytes
+
 
 def generate_ideogram(prompt):
-    """Ideogram v2 عبر API"""
+    if not ideogram_key:
+        raise Exception("مفتاح IDEOGRAM_API_KEY غير موجود في الإعدادات")
     headers = {
-        "Api-Key": st.secrets.get("IDEOGRAM_API_KEY"),
+        "Api-Key": ideogram_key,
         "Content-Type": "application/json"
     }
     payload = {
@@ -112,68 +175,33 @@ def generate_ideogram(prompt):
             "magic_prompt_option": "AUTO"
         }
     }
-    r = requests.post("https://api.ideogram.ai/generate",
-                      headers=headers, json=payload, timeout=90)
-    return r.json()["data"][0]["url"]
+    r = requests.post(
+        "https://api.ideogram.ai/generate",
+        headers=headers, json=payload, timeout=90
+    )
+    data = r.json()
+    if "data" not in data:
+        raise Exception(f"خطأ Ideogram: {data}")
+    return "url", data["data"][0]["url"]
+
 
 def generate_image(model_key, prompt):
-    """دالة مركزية لتوليد الصور"""
     if model_key == "dalle3":
-        return "url", generate_dalle(prompt)
+        return generate_dalle(prompt)
     elif model_key == "sdxl":
-        return "bytes", generate_sdxl(prompt)
+        return generate_sdxl(prompt)
     elif model_key == "flux-dev":
-        return "bytes", generate_flux_dev(prompt)
+        return generate_flux_dev(prompt)
     elif model_key == "flux-pro":
-        return "bytes", generate_flux_pro(prompt)
+        return generate_flux_pro(prompt)
     elif model_key == "ideogram":
-        return "url", generate_ideogram(prompt)
-
-# --- القائمة الجانبية ---
-with st.sidebar:
-    st.header("🎮 مركز التحكم v18")
-
-    mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور"])
-
-    st.divider()
-
-    if mode == "💬 دردشة":
-        st.subheader("🎤 التسجيل الصوتي")
-        audio_record = mic_recorder(
-            start_prompt="بدء التسجيل",
-            stop_prompt="إرسال الصوت",
-            just_once=True, key='sidebar_mic'
-        )
-        thinking_level = st.select_slider(
-            "🧠 مستوى التفكير:",
-            options=["Low", "Medium", "High"], value="High"
-        )
-        persona = st.selectbox("👤 الخبير:", [
-            "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
-        ])
-        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
-        uploaded_file = st.file_uploader(
-            "📂 رفع ملف:",
-            type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
-        )
+        return generate_ideogram(prompt)
     else:
-        audio_record = None
-        uploaded_file = None
-        image_model = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
-        img_size = st.selectbox("📐 الحجم:", ["1024×1024", "1792×1024", "1024×1792"])
-        img_style = st.selectbox("🎨 الأسلوب:", [
-            "واقعي", "كرتوني", "زيتي", "خيال علمي",
-            "أنيمي", "رسم بالقلم", "مائي"
-        ])
-        translate_prompt = st.checkbox("🌐 ترجمة الوصف للإنجليزية تلقائياً", value=True)
+        raise Exception("نموذج غير معروف")
 
-    st.divider()
-    if st.button("🗑️ مسح"):
-        st.session_state.messages = []
-        st.session_state.generated_images = []
-        st.rerun()
 
-# --- دوال مساعدة ---
+# --- 5. دوال الدردشة ---
+
 def get_chat_response(user_text, engine, persona, level, file=None):
     model_id = MODEL_MAP[engine]
     if "deepseek" in model_id:
@@ -188,7 +216,7 @@ def get_chat_response(user_text, engine, persona, level, file=None):
         return r.choices[0].message.content
 
     model = genai.GenerativeModel(model_id)
-    parts = [f"بصفتك {persona} بمستوى {level}:\n{user_text}"]
+    parts = [f"بصفتك {persona} بمستوى تفكير {level}:\n{user_text}"]
     if file:
         if file.type.startswith("image"):
             parts.append(Image.open(file))
@@ -196,31 +224,77 @@ def get_chat_response(user_text, engine, persona, level, file=None):
             parts.append(file.read().decode("utf-8", errors="ignore"))
     return model.generate_content(parts).text
 
+
 def text_to_speech(text):
-    tts = gTTS(text=text[:400].replace("*","").replace("#",""), lang='ar')
+    clean = text[:400].replace("*", "").replace("#", "")
+    tts = gTTS(text=clean, lang='ar')
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     return fp
 
+
 def translate_to_english(text):
-    """ترجمة النص للإنجليزية باستخدام Gemini"""
     model = genai.GenerativeModel("models/gemini-2.5-flash")
-    r = model.generate_content(f"Translate to English only, no explanation:\n{text}")
+    r = model.generate_content(
+        f"Translate the following to English only, no explanation, no quotes:\n{text}"
+    )
     return r.text.strip()
 
-# --- الواجهة الرئيسية ---
+
+# --- 6. القائمة الجانبية ---
+with st.sidebar:
+    st.header("🎮 مركز التحكم v18.1")
+
+    mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور"])
+    st.divider()
+
+    if mode == "💬 دردشة":
+        st.subheader("🎤 التسجيل الصوتي")
+        audio_record = mic_recorder(
+            start_prompt="بدء التسجيل",
+            stop_prompt="إرسال الصوت",
+            just_once=True,
+            key="sidebar_mic"
+        )
+        thinking_level = st.select_slider(
+            "🧠 مستوى التفكير:",
+            options=["Low", "Medium", "High"],
+            value="High"
+        )
+        persona = st.selectbox("👤 الخبير:", [
+            "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
+        ])
+        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
+        uploaded_file = st.file_uploader(
+            "📂 رفع ملف:",
+            type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
+        )
+    else:
+        audio_record = None
+        uploaded_file = None
+        image_model = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
+        img_style = st.selectbox("🎨 الأسلوب:", list(STYLE_MAP.keys()))
+        translate_prompt = st.checkbox("🌐 ترجمة الوصف للإنجليزية تلقائياً", value=True)
+
+    st.divider()
+    if st.button("🗑️ مسح المحادثة"):
+        st.session_state.messages = []
+        st.session_state.generated_images = []
+        st.rerun()
+
+# --- 7. تهيئة الحالة ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "generated_images" not in st.session_state:
     st.session_state.generated_images = []
 
-# وضع الدردشة
+# --- 8. وضع الدردشة ---
 if mode == "💬 دردشة":
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    prompt = st.chat_input("اكتب سؤالك...")
+    prompt = st.chat_input("اكتب سؤالك أو استخدم الميكروفون...")
 
     if prompt or audio_record:
         user_txt = prompt if prompt else "🎤 [رسالة صوتية]"
@@ -234,67 +308,70 @@ if mode == "💬 دردشة":
                         user_txt, engine_choice, persona, thinking_level, uploaded_file
                     )
                     st.markdown(reply)
-                    st.audio(text_to_speech(reply), format='audio/mp3')
+                    st.audio(text_to_speech(reply), format="audio/mp3")
                     st.session_state.messages.append({"role": "assistant", "content": reply})
                 except Exception as e:
-                    st.error(f"❌ {e}")
+                    st.error(f"❌ فشل في المعالجة: {e}")
 
-# وضع توليد الصور
+# --- 9. وضع توليد الصور ---
 else:
     st.subheader("🎨 توليد الصور بالذكاء الاصطناعي")
 
     # عرض الصور السابقة
     for img_data in st.session_state.generated_images:
         st.markdown(f"**الوصف:** {img_data['prompt']}")
+        if img_data.get("translated"):
+            st.caption(f"الوصف المترجم: {img_data['translated']}")
         if img_data["type"] == "url":
             st.image(img_data["data"], use_column_width=True)
         else:
             st.image(img_data["data"], use_column_width=True)
+            st.download_button(
+                "⬇️ تحميل الصورة",
+                data=img_data["data"],
+                file_name="generated_image.png",
+                mime="image/png",
+                key=f"dl_{img_data['prompt'][:20]}"
+            )
         st.divider()
 
     img_prompt = st.chat_input("صف الصورة التي تريدها بالعربية أو الإنجليزية...")
 
     if img_prompt:
-        with st.spinner("جاري رسم الصورة..."):
+        with st.spinner("🎨 جاري رسم الصورة... قد يستغرق 30 ثانية"):
             try:
                 final_prompt = img_prompt
-                style_map = {
-                    "واقعي": "photorealistic, high quality",
-                    "كرتوني": "cartoon style, colorful",
-                    "زيتي": "oil painting style",
-                    "خيال علمي": "sci-fi, futuristic",
-                    "أنيمي": "anime style",
-                    "رسم بالقلم": "pencil sketch, detailed",
-                    "مائي": "watercolor painting"
-                }
+                translated_text = None
 
-                # ترجمة تلقائية إذا كان الخيار مفعّلاً
-                if translate_prompt and api_key:
-                    final_prompt = translate_to_english(img_prompt)
+                # ترجمة تلقائية
+                if translate_prompt:
+                    translated_text = translate_to_english(img_prompt)
+                    final_prompt = translated_text
 
-                # إضافة الأسلوب للوصف
-                final_prompt = f"{final_prompt}, {style_map.get(img_style, '')}"
+                # إضافة الأسلوب
+                style_suffix = STYLE_MAP.get(img_style, "")
+                final_prompt = f"{final_prompt}, {style_suffix}"
 
                 model_key = IMAGE_MODELS[image_model]
                 result_type, result_data = generate_image(model_key, final_prompt)
 
+                # حفظ في السجل
                 st.session_state.generated_images.append({
                     "prompt": img_prompt,
+                    "translated": translated_text,
                     "type": result_type,
                     "data": result_data
                 })
 
+                # عرض النتيجة
                 st.markdown(f"**الوصف:** {img_prompt}")
-                if translate_prompt:
-                    st.caption(f"الوصف المترجم: {final_prompt}")
+                if translated_text:
+                    st.caption(f"الوصف المترجم: {translated_text}")
 
                 if result_type == "url":
                     st.image(result_data, use_column_width=True)
                 else:
                     st.image(result_data, use_column_width=True)
-
-                # زر التحميل
-                if result_type == "bytes":
                     st.download_button(
                         "⬇️ تحميل الصورة",
                         data=result_data,
@@ -303,4 +380,8 @@ else:
                     )
 
             except Exception as e:
-                st.error(f"❌ فشل في توليد الصورة: {e}")
+                err = str(e)
+                if "انتظر" in err or "estimated_time" in err:
+                    st.warning(f"⏳ {err}")
+                else:
+                    st.error(f"❌ فشل في توليد الصورة: {err}")
