@@ -121,18 +121,41 @@ def generate_flux_dev(prompt):
             timeout=120
         )
         content_type = response.headers.get("Content-Type", "")
+
+        # ✅ ردّ ناجح — صورة
         if content_type.startswith("image"):
             return "bytes", response.content
+
+        # ❌ ردّ فارغ تماماً
+        if not response.content:
+            raise Exception("الخادم أرسل ردًا فارغاً — تحقق من مفتاح HF_API_KEY")
+
+        # خطأ 401 — مفتاح خاطئ
+        if response.status_code == 401:
+            raise Exception("مفتاح HF_API_KEY غير صحيح أو منتهي الصلاحية")
+
+        # خطأ 403 — النموذج يحتاج موافقة
+        if response.status_code == 403:
+            raise Exception("يجب قبول شروط نموذج FLUX.1-dev على موقع Hugging Face أولاً")
+
+        # محاولة قراءة JSON بأمان
         try:
             error = response.json()
-            if "estimated_time" in error and attempt < 2:
-                wait = int(error["estimated_time"]) + 5
-                st.toast(f"⏳ النموذج يتحمّل... انتظر {wait} ثانية")
-                time.sleep(wait)
-                continue
-            raise Exception(f"خطأ: {error.get('error', response.text)}")
-        except Exception as e:
-            raise e
+        except Exception:
+            raise Exception(
+                f"رد غير متوقع من Hugging Face (كود {response.status_code}): "
+                f"{response.text[:300]}"
+            )
+
+        # النموذج لا يزال يتحمّل — أعد المحاولة
+        if "estimated_time" in error and attempt < 2:
+            wait = int(error["estimated_time"]) + 5
+            st.toast(f"⏳ النموذج يتحمّل... انتظر {wait} ثانية (محاولة {attempt+1}/3)")
+            time.sleep(wait)
+            continue
+
+        raise Exception(f"خطأ من Hugging Face: {error.get('error', str(error))}")
+
     raise Exception("فشل بعد 3 محاولات، حاول لاحقاً")
 
 
@@ -281,6 +304,13 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.generated_images = []
         st.rerun()
+
+    with st.expander("🔑 تشخيص المفاتيح"):
+        st.write("GEMINI:", "✅" if api_key else "❌")
+        st.write("OPENAI:", "✅" if openai_key else "❌")
+        st.write("HF:", "✅" if hf_key else "❌")
+        st.write("TOGETHER:", "✅" if together_key else "❌")
+        st.write("IDEOGRAM:", "✅" if ideogram_key else "❌")
 
 # --- 7. تهيئة الحالة ---
 if "messages" not in st.session_state:
