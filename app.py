@@ -38,12 +38,20 @@ MODEL_MAP = {
     "DeepSeek R1 (محلي)": "deepseek-r1",
 }
 
+# كل النماذج مع المفتاح المطلوب لكل منها
+ALL_IMAGE_MODELS = {
+    "Flux-Dev (Hugging Face)":  ("flux-dev",  hf_key),
+    "Stable Diffusion XL":      ("sdxl",      hf_key),
+    "DALL·E 3 (OpenAI)":        ("dalle3",    openai_key),
+    "Flux-Pro (Together AI)":   ("flux-pro",  together_key),
+    "Ideogram v2":              ("ideogram",  ideogram_key),
+}
+
+# فقط النماذج التي يوجد مفتاحها
 IMAGE_MODELS = {
-    "Flux-Dev (Hugging Face) ✅": "flux-dev",
-    "DALL·E 3 (OpenAI)":          "dalle3",
-    "Flux-Pro (Together AI)":     "flux-pro",
-    "Stable Diffusion XL":        "sdxl",
-    "Ideogram v2":                "ideogram",
+    name: model_key
+    for name, (model_key, secret) in ALL_IMAGE_MODELS.items()
+    if secret
 }
 
 STYLE_MAP = {
@@ -295,9 +303,16 @@ with st.sidebar:
     else:
         audio_record = None
         uploaded_file = None
-        image_model = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
-        img_style = st.selectbox("🎨 الأسلوب:", list(STYLE_MAP.keys()))
-        translate_prompt = st.checkbox("🌐 ترجمة الوصف للإنجليزية تلقائياً", value=True)
+        if IMAGE_MODELS:
+            image_model = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
+            img_style = st.selectbox("🎨 الأسلوب:", list(STYLE_MAP.keys()))
+            translate_prompt = st.checkbox("🌐 ترجمة الوصف للإنجليزية تلقائياً", value=True)
+        else:
+            st.error("❌ لا يوجد أي مفتاح API لنماذج الرسم!")
+            st.info("أضف على الأقل HF_API_KEY في إعدادات Streamlit")
+            image_model = None
+            img_style = None
+            translate_prompt = False
 
     st.divider()
     if st.button("🗑️ مسح المحادثة"):
@@ -347,6 +362,10 @@ if mode == "💬 دردشة":
 else:
     st.subheader("🎨 توليد الصور بالذكاء الاصطناعي")
 
+    if not IMAGE_MODELS:
+        st.error("❌ لا يوجد أي نموذج متاح — أضف مفاتيح API في إعدادات Streamlit")
+        st.stop()
+
     # عرض الصور السابقة
     for img_data in st.session_state.generated_images:
         st.markdown(f"**الوصف:** {img_data['prompt']}")
@@ -368,50 +387,53 @@ else:
     img_prompt = st.chat_input("صف الصورة التي تريدها بالعربية أو الإنجليزية...")
 
     if img_prompt:
-        with st.spinner("🎨 جاري رسم الصورة... قد يستغرق 30 ثانية"):
-            try:
-                final_prompt = img_prompt
-                translated_text = None
+        if not image_model:
+            st.error("❌ اختر نموذجاً متاحاً أولاً")
+        else:
+            with st.spinner("🎨 جاري رسم الصورة... قد يستغرق 30 ثانية"):
+                try:
+                    final_prompt = img_prompt
+                    translated_text = None
 
-                # ترجمة تلقائية
-                if translate_prompt:
-                    translated_text = translate_to_english(img_prompt)
-                    final_prompt = translated_text
+                    # ترجمة تلقائية
+                    if translate_prompt:
+                        translated_text = translate_to_english(img_prompt)
+                        final_prompt = translated_text
 
-                # إضافة الأسلوب
-                style_suffix = STYLE_MAP.get(img_style, "")
-                final_prompt = f"{final_prompt}, {style_suffix}"
+                    # إضافة الأسلوب
+                    style_suffix = STYLE_MAP.get(img_style, "")
+                    final_prompt = f"{final_prompt}, {style_suffix}"
 
-                model_key = IMAGE_MODELS[image_model]
-                result_type, result_data = generate_image(model_key, final_prompt)
+                    model_key = IMAGE_MODELS[image_model]
+                    result_type, result_data = generate_image(model_key, final_prompt)
 
-                # حفظ في السجل
-                st.session_state.generated_images.append({
-                    "prompt": img_prompt,
-                    "translated": translated_text,
-                    "type": result_type,
-                    "data": result_data
-                })
+                    # حفظ في السجل
+                    st.session_state.generated_images.append({
+                        "prompt": img_prompt,
+                        "translated": translated_text,
+                        "type": result_type,
+                        "data": result_data
+                    })
 
-                # عرض النتيجة
-                st.markdown(f"**الوصف:** {img_prompt}")
-                if translated_text:
-                    st.caption(f"الوصف المترجم: {translated_text}")
+                    # عرض النتيجة
+                    st.markdown(f"**الوصف:** {img_prompt}")
+                    if translated_text:
+                        st.caption(f"الوصف المترجم: {translated_text}")
 
-                if result_type == "url":
-                    st.image(result_data, use_column_width=True)
-                else:
-                    st.image(result_data, use_column_width=True)
-                    st.download_button(
-                        "⬇️ تحميل الصورة",
-                        data=result_data,
-                        file_name="generated_image.png",
-                        mime="image/png"
-                    )
+                    if result_type == "url":
+                        st.image(result_data, use_column_width=True)
+                    else:
+                        st.image(result_data, use_column_width=True)
+                        st.download_button(
+                            "⬇️ تحميل الصورة",
+                            data=result_data,
+                            file_name="generated_image.png",
+                            mime="image/png"
+                        )
 
-            except Exception as e:
-                err = str(e)
-                if "انتظر" in err or "estimated_time" in err:
-                    st.warning(f"⏳ {err}")
-                else:
-                    st.error(f"❌ فشل في توليد الصورة: {err}")
+                except Exception as e:
+                    err = str(e)
+                    if "انتظر" in err or "estimated_time" in err:
+                        st.warning(f"⏳ {err}")
+                    else:
+                        st.error(f"❌ فشل في توليد الصورة: {err}")
