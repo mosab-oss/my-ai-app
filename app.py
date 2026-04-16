@@ -40,7 +40,7 @@ MODEL_MAP = {
 
 # كل النماذج مع المفتاح المطلوب لكل منها
 ALL_IMAGE_MODELS = {
-    "Flux-Dev (Hugging Face)":  ("flux-dev",  hf_key),
+    "Flux-Schnell (Hugging Face)":  ("flux-dev",  hf_key),
     "Stable Diffusion XL":      ("sdxl",      hf_key),
     "DALL·E 3 (OpenAI)":        ("dalle3",    openai_key),
     "Flux-Pro (Together AI)":   ("flux-pro",  together_key),
@@ -113,7 +113,13 @@ def generate_sdxl(prompt):
         raise e
 
 
-def generate_flux_dev(prompt):
+HF_MODELS_FALLBACK = [
+    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
+]
+
+def _hf_post(url, prompt):
+    """إرسال طلب لـ Hugging Face مع معالجة شاملة للأخطاء"""
     if not hf_key:
         raise Exception("مفتاح HF_API_KEY غير موجود في الإعدادات")
     headers = {
@@ -122,49 +128,56 @@ def generate_flux_dev(prompt):
     }
     payload = {"inputs": prompt}
     for attempt in range(3):
-        response = requests.post(
-            "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
-            headers=headers,
-            json=payload,
-            timeout=120
-        )
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
         content_type = response.headers.get("Content-Type", "")
 
-        # ✅ ردّ ناجح — صورة
         if content_type.startswith("image"):
-            return "bytes", response.content
+            return response.content
 
-        # ❌ ردّ فارغ تماماً
         if not response.content:
             raise Exception("الخادم أرسل ردًا فارغاً — تحقق من مفتاح HF_API_KEY")
 
-        # خطأ 401 — مفتاح خاطئ
         if response.status_code == 401:
             raise Exception("مفتاح HF_API_KEY غير صحيح أو منتهي الصلاحية")
 
-        # خطأ 403 — النموذج يحتاج موافقة
         if response.status_code == 403:
-            raise Exception("يجب قبول شروط نموذج FLUX.1-dev على موقع Hugging Face أولاً")
+            raise Exception("يجب قبول شروط هذا النموذج على موقع Hugging Face أولاً")
 
-        # محاولة قراءة JSON بأمان
+        if response.status_code == 404:
+            raise Exception(f"النموذج غير متاح (404): {url}")
+
         try:
             error = response.json()
         except Exception:
             raise Exception(
-                f"رد غير متوقع من Hugging Face (كود {response.status_code}): "
-                f"{response.text[:300]}"
+                f"رد غير متوقع (كود {response.status_code}): {response.text[:300]}"
             )
 
-        # النموذج لا يزال يتحمّل — أعد المحاولة
         if "estimated_time" in error and attempt < 2:
             wait = int(error["estimated_time"]) + 5
-            st.toast(f"⏳ النموذج يتحمّل... انتظر {wait} ثانية (محاولة {attempt+1}/3)")
+            st.toast(f"⏳ النموذج يتحمّل... {wait} ثانية (محاولة {attempt+1}/3)")
             time.sleep(wait)
             continue
 
-        raise Exception(f"خطأ من Hugging Face: {error.get('error', str(error))}")
+        raise Exception(f"خطأ HF: {error.get('error', str(error))}")
 
-    raise Exception("فشل بعد 3 محاولات، حاول لاحقاً")
+    raise Exception("فشل بعد 3 محاولات")
+
+
+def generate_flux_dev(prompt):
+    """يجرب FLUX.1-schnell أولاً ثم يتراجع لـ SD2.1 تلقائياً"""
+    last_error = None
+    for model_url in HF_MODELS_FALLBACK:
+        try:
+            img_bytes = _hf_post(model_url, prompt)
+            return "bytes", img_bytes
+        except Exception as e:
+            last_error = str(e)
+            if "404" in last_error or "403" in last_error:
+                st.toast(f"⚠️ تعذّر استخدام النموذج، أجرّب البديل...")
+                continue
+            raise Exception(last_error)
+    raise Exception(f"فشلت جميع النماذج: {last_error}")
 
 
 def generate_flux_pro(prompt):
