@@ -1,7 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 from openai import OpenAI
-import io, requests, base64, time
+from huggingface_hub import InferenceClient
+import io, base64, time
 from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder
@@ -83,100 +84,44 @@ def generate_dalle(prompt):
 def generate_sdxl(prompt):
     if not hf_key:
         raise Exception("مفتاح HF_API_KEY غير موجود في الإعدادات")
-    headers = {
-        "Authorization": f"Bearer {hf_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "num_inference_steps": 30,
-            "guidance_scale": 7.5,
-        }
-    }
-    response = requests.post(
-        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-        headers=headers,
-        json=payload,
-        timeout=120
+    client = InferenceClient(api_key=hf_key)
+    image = client.text_to_image(
+        prompt=prompt,
+        model="stabilityai/stable-diffusion-xl-base-1.0"
     )
-    content_type = response.headers.get("Content-Type", "")
-    if content_type.startswith("image"):
-        return "bytes", response.content
-    try:
-        error = response.json()
-        if "estimated_time" in error:
-            wait = int(error["estimated_time"]) + 5
-            raise Exception(f"⏳ النموذج يتحمّل، انتظر {wait} ثانية ثم أعد المحاولة")
-        raise Exception(f"خطأ من Hugging Face: {error.get('error', response.text)}")
-    except Exception as e:
-        raise e
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return "bytes", buf.getvalue()
 
 
-HF_MODELS_FALLBACK = [
-    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
+# نماذج HF مرتبة حسب الأولوية
+HF_MODELS_PRIORITY = [
+    "black-forest-labs/FLUX.1-schnell",
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-xl-base-1.0",
 ]
 
-def _hf_post(url, prompt):
-    """إرسال طلب لـ Hugging Face مع معالجة شاملة للأخطاء"""
+def generate_flux_dev(prompt):
+    """توليد صورة عبر InferenceClient الرسمي مع fallback تلقائي"""
     if not hf_key:
         raise Exception("مفتاح HF_API_KEY غير موجود في الإعدادات")
-    headers = {
-        "Authorization": f"Bearer {hf_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {"inputs": prompt}
-    for attempt in range(3):
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        content_type = response.headers.get("Content-Type", "")
 
-        if content_type.startswith("image"):
-            return response.content
-
-        if not response.content:
-            raise Exception("الخادم أرسل ردًا فارغاً — تحقق من مفتاح HF_API_KEY")
-
-        if response.status_code == 401:
-            raise Exception("مفتاح HF_API_KEY غير صحيح أو منتهي الصلاحية")
-
-        if response.status_code == 403:
-            raise Exception("يجب قبول شروط هذا النموذج على موقع Hugging Face أولاً")
-
-        if response.status_code == 404:
-            raise Exception(f"النموذج غير متاح (404): {url}")
-
-        try:
-            error = response.json()
-        except Exception:
-            raise Exception(
-                f"رد غير متوقع (كود {response.status_code}): {response.text[:300]}"
-            )
-
-        if "estimated_time" in error and attempt < 2:
-            wait = int(error["estimated_time"]) + 5
-            st.toast(f"⏳ النموذج يتحمّل... {wait} ثانية (محاولة {attempt+1}/3)")
-            time.sleep(wait)
-            continue
-
-        raise Exception(f"خطأ HF: {error.get('error', str(error))}")
-
-    raise Exception("فشل بعد 3 محاولات")
-
-
-def generate_flux_dev(prompt):
-    """يجرب FLUX.1-schnell أولاً ثم يتراجع لـ SD2.1 تلقائياً"""
+    client = InferenceClient(api_key=hf_key)
     last_error = None
-    for model_url in HF_MODELS_FALLBACK:
+
+    for model_id in HF_MODELS_PRIORITY:
         try:
-            img_bytes = _hf_post(model_url, prompt)
-            return "bytes", img_bytes
+            st.toast(f"⏳ جاري استخدام {model_id}...")
+            image = client.text_to_image(prompt=prompt, model=model_id)
+            # image هو PIL.Image — نحوله لـ bytes
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            return "bytes", buf.getvalue()
         except Exception as e:
             last_error = str(e)
-            if "404" in last_error or "403" in last_error:
-                st.toast(f"⚠️ تعذّر استخدام النموذج، أجرّب البديل...")
-                continue
-            raise Exception(last_error)
+            st.toast(f"⚠️ {model_id} غير متاح، أجرّب البديل...")
+            continue
+
     raise Exception(f"فشلت جميع النماذج: {last_error}")
 
 
