@@ -12,3 +12,4 @@ pydub
 ffmpy
 google-generativeai
 huggingface_hub>=0.28.0
+groq
