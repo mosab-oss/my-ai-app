@@ -309,12 +309,30 @@ def text_to_speech(text):
 
 
 def translate_to_english(text):
-    model = genai.GenerativeModel("models/gemini-2.5-flash")
-    r = model.generate_content(
-        f"Translate the following to English only, no explanation, no quotes:\n{text}"
-    )
-    return r.text.strip()
+    prompt = f"Translate the following to English only, no explanation, no quotes:\n{text}"
+    if api_key:
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        return model.generate_content(prompt).text.strip()
+    if groq_key and GROQ_AVAILABLE:
+        client = Groq(api_key=groq_key)
+        r = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        return r.choices[0].message.content.strip()
+    return text
 
+
+# --- قيم افتراضية لتجنب أخطاء المتغيرات ---
+audio_record   = None
+uploaded_file  = None
+engine_choice  = list(MODEL_MAP.keys())[0] if MODEL_MAP else None
+persona        = "أهل العلم"
+thinking_level = "High"
+image_model    = list(IMAGE_MODELS.keys())[0] if IMAGE_MODELS else None
+img_style      = "واقعي"
+translate_prompt = True
 
 # --- 6. القائمة الجانبية ---
 with st.sidebar:
@@ -339,24 +357,22 @@ with st.sidebar:
         persona = st.selectbox("👤 الخبير:", [
             "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
         ])
-        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys())) if MODEL_MAP else None
+        if MODEL_MAP:
+            engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
+        else:
+            st.error("❌ لا يوجد أي نموذج دردشة متاح!")
         uploaded_file = st.file_uploader(
             "📂 رفع ملف:",
             type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
         )
+
     else:
-        audio_record = None
-        uploaded_file = None
         if IMAGE_MODELS:
-            image_model = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
-            img_style = st.selectbox("🎨 الأسلوب:", list(STYLE_MAP.keys()))
+            image_model    = st.selectbox("🖼️ نموذج الرسم:", list(IMAGE_MODELS.keys()))
+            img_style      = st.selectbox("🎨 الأسلوب:", list(STYLE_MAP.keys()))
             translate_prompt = st.checkbox("🌐 ترجمة الوصف للإنجليزية تلقائياً", value=True)
         else:
-            st.error("❌ لا يوجد أي مفتاح API لنماذج الرسم!")
-            st.info("أضف على الأقل HF_API_KEY في إعدادات Streamlit")
-            image_model = None
-            img_style = None
-            translate_prompt = False
+            st.error("❌ لا يوجد أي نموذج صور متاح!")
 
     st.divider()
     if st.button("🗑️ مسح المحادثة"):
