@@ -2,13 +2,18 @@ import streamlit as st
 import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
-import io, base64, time
+import io, base64, time, requests, urllib.parse
 from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
 
 # --- 1. الإعدادات ---
-st.set_page_config(page_title="منصة مصعب v18.1", layout="wide", page_icon="🎤")
+st.set_page_config(page_title="منصة مصعب v19", layout="wide", page_icon="🎤")
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
@@ -20,35 +25,49 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. مفاتيح API ---
-api_key       = st.secrets.get("GEMINI_API_KEY")
-openai_key    = st.secrets.get("OPENAI_API_KEY")
-hf_key        = st.secrets.get("HF_API_KEY")
-together_key  = st.secrets.get("TOGETHER_API_KEY")
-ideogram_key  = st.secrets.get("IDEOGRAM_API_KEY")
+api_key        = st.secrets.get("GEMINI_API_KEY")
+openai_key     = st.secrets.get("OPENAI_API_KEY")
+hf_key         = st.secrets.get("HF_API_KEY")
+together_key   = st.secrets.get("TOGETHER_API_KEY")
+ideogram_key   = st.secrets.get("IDEOGRAM_API_KEY")
+groq_key       = st.secrets.get("GROQ_API_KEY")
+openrouter_key = st.secrets.get("OPENROUTER_API_KEY")
 
-if not api_key:
-    st.error("⚠️ مفتاح GEMINI_API_KEY غير موجود في الإعدادات!")
+if api_key:
+    genai.configure(api_key=api_key)
+elif not groq_key:
+    st.error("⚠️ يجب وجود GEMINI_API_KEY أو GROQ_API_KEY على الأقل!")
     st.stop()
 
-genai.configure(api_key=api_key)
-
 # --- 3. قوائم النماذج ---
+ALL_CHAT_MODELS = {
+    "Gemini 2.5 Flash":          ("gemini-flash",   api_key),
+    "Gemini 2.5 Pro":            ("gemini-pro",     api_key),
+    "Groq LLaMA 3.3 70B":        ("groq-llama",     groq_key),
+    "Groq Mixtral 8x7B":         ("groq-mixtral",   groq_key),
+    "Groq DeepSeek R1":          ("groq-deepseek",  groq_key),
+    "OpenRouter DeepSeek R1":    ("or-deepseek",    openrouter_key),
+    "OpenRouter Qwen 2.5 72B":   ("or-qwen",        openrouter_key),
+    "DeepSeek R1 (محلي)":        ("deepseek-local", None),
+}
+
 MODEL_MAP = {
-    "Gemini 2.5 Flash":    "models/gemini-2.5-flash",
-    "Gemini 2.5 Pro":      "models/gemini-2.5-pro-preview-03-25",
-    "DeepSeek R1 (محلي)": "deepseek-r1",
+    name: key
+    for name, (key, secret) in ALL_CHAT_MODELS.items()
+    if secret or key == "deepseek-local"
 }
 
-# كل النماذج مع المفتاح المطلوب لكل منها
 ALL_IMAGE_MODELS = {
-    "Flux-Schnell (Hugging Face)":  ("flux-dev",  hf_key),
-    "Stable Diffusion XL":      ("sdxl",      hf_key),
-    "DALL·E 3 (OpenAI)":        ("dalle3",    openai_key),
-    "Flux-Pro (Together AI)":   ("flux-pro",  together_key),
-    "Ideogram v2":              ("ideogram",  ideogram_key),
+    "Pollinations FLUX (مجاني بلا مفتاح)":   ("poll-flux",   True),
+    "Pollinations DALL-E (مجاني بلا مفتاح)": ("poll-dalle",  True),
+    "Pollinations Turbo (مجاني بلا مفتاح)":  ("poll-turbo",  True),
+    "Flux-Schnell (Hugging Face)":            ("flux-dev",    hf_key),
+    "Stable Diffusion XL":                   ("sdxl",        hf_key),
+    "DALL·E 3 (OpenAI)":                     ("dalle3",      openai_key),
+    "Flux-Pro (Together AI)":                ("flux-pro",    together_key),
+    "Ideogram v2":                           ("ideogram",    ideogram_key),
 }
 
-# فقط النماذج التي يوجد مفتاحها
 IMAGE_MODELS = {
     name: model_key
     for name, (model_key, secret) in ALL_IMAGE_MODELS.items()
@@ -174,8 +193,24 @@ def generate_ideogram(prompt):
     return "url", data["data"][0]["url"]
 
 
+def generate_pollinations(prompt, model="flux"):
+    """توليد صورة مجاناً بدون أي مفتاح API عبر Pollinations.ai"""
+    encoded = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?model={model}&width=1024&height=1024&nologo=true&enhance=true"
+    response = requests.get(url, timeout=90)
+    if response.status_code == 200 and response.headers.get("Content-Type","").startswith("image"):
+        return "bytes", response.content
+    raise Exception(f"فشل Pollinations (كود {response.status_code})")
+
+
 def generate_image(model_key, prompt):
-    if model_key == "dalle3":
+    if model_key == "poll-flux":
+        return generate_pollinations(prompt, model="flux")
+    elif model_key == "poll-dalle":
+        return generate_pollinations(prompt, model="dall-e-3")
+    elif model_key == "poll-turbo":
+        return generate_pollinations(prompt, model="turbo")
+    elif model_key == "dalle3":
         return generate_dalle(prompt)
     elif model_key == "sdxl":
         return generate_sdxl(prompt)
@@ -191,20 +226,71 @@ def generate_image(model_key, prompt):
 
 # --- 5. دوال الدردشة ---
 
+GROQ_MODEL_IDS = {
+    "groq-llama":    "llama-3.3-70b-versatile",
+    "groq-mixtral":  "mixtral-8x7b-32768",
+    "groq-deepseek": "deepseek-r1-distill-llama-70b",
+}
+
+OR_MODEL_IDS = {
+    "or-deepseek": "deepseek/deepseek-r1:free",
+    "or-qwen":     "qwen/qwen-2.5-72b-instruct:free",
+}
+
+GEMINI_MODEL_IDS = {
+    "gemini-flash": "models/gemini-2.5-flash",
+    "gemini-pro":   "models/gemini-2.5-pro-preview-03-25",
+}
+
 def get_chat_response(user_text, engine, persona, level, file=None):
     model_id = MODEL_MAP[engine]
-    if "deepseek" in model_id:
+    system_prompt = f"أنت {persona} بمستوى تفكير {level}. أجب بالعربية دائماً."
+
+    # Groq
+    if model_id in GROQ_MODEL_IDS and GROQ_AVAILABLE and groq_key:
+        client = Groq(api_key=groq_key)
+        r = client.chat.completions.create(
+            model=GROQ_MODEL_IDS[model_id],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_text}
+            ],
+            max_tokens=2048
+        )
+        return r.choices[0].message.content
+
+    # OpenRouter (نماذج مجانية)
+    if model_id in OR_MODEL_IDS and openrouter_key:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=openrouter_key,
+        )
+        r = client.chat.completions.create(
+            model=OR_MODEL_IDS[model_id],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_text}
+            ],
+        )
+        return r.choices[0].message.content
+
+    # DeepSeek محلي
+    if model_id == "deepseek-local":
         local_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
         r = local_client.chat.completions.create(
-            model=model_id,
+            model="deepseek-r1",
             messages=[
-                {"role": "system", "content": f"أنت {persona} بمستوى {level}. أجب بالعربية."},
-                {"role": "user", "content": user_text}
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_text}
             ]
         )
         return r.choices[0].message.content
 
-    model = genai.GenerativeModel(model_id)
+    # Gemini (الافتراضي)
+    if not api_key:
+        raise Exception("مفتاح Gemini غير موجود — اختر نموذجاً آخر أو أضف GEMINI_API_KEY")
+    gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
+    model = genai.GenerativeModel(gemini_id)
     parts = [f"بصفتك {persona} بمستوى تفكير {level}:\n{user_text}"]
     if file:
         if file.type.startswith("image"):
@@ -232,7 +318,7 @@ def translate_to_english(text):
 
 # --- 6. القائمة الجانبية ---
 with st.sidebar:
-    st.header("🎮 مركز التحكم v18.1")
+    st.header("🎮 مركز التحكم v19")
 
     mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور"])
     st.divider()
@@ -253,7 +339,7 @@ with st.sidebar:
         persona = st.selectbox("👤 الخبير:", [
             "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
         ])
-        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
+        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys())) if MODEL_MAP else None
         uploaded_file = st.file_uploader(
             "📂 رفع ملف:",
             type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
@@ -279,11 +365,16 @@ with st.sidebar:
         st.rerun()
 
     with st.expander("🔑 تشخيص المفاتيح"):
-        st.write("GEMINI:", "✅" if api_key else "❌")
-        st.write("OPENAI:", "✅" if openai_key else "❌")
-        st.write("HF:", "✅" if hf_key else "❌")
-        st.write("TOGETHER:", "✅" if together_key else "❌")
-        st.write("IDEOGRAM:", "✅" if ideogram_key else "❌")
+        st.write("GEMINI:",      "✅" if api_key        else "❌")
+        st.write("GROQ:",        "✅" if groq_key       else "❌")
+        st.write("OPENROUTER:",  "✅" if openrouter_key else "❌")
+        st.write("HF:",          "✅" if hf_key         else "❌")
+        st.write("OPENAI:",      "✅" if openai_key     else "❌")
+        st.write("TOGETHER:",    "✅" if together_key   else "❌")
+        st.write("IDEOGRAM:",    "✅" if ideogram_key   else "❌")
+        st.write("Pollinations:", "✅ دائماً مجاني")
+        if not GROQ_AVAILABLE:
+            st.warning("groq غير مثبت — نفّذ: pip install groq")
 
 # --- 7. تهيئة الحالة ---
 if "messages" not in st.session_state:
