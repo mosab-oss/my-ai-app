@@ -41,15 +41,17 @@ elif not groq_key:
 
 # --- 3. قوائم النماذج ---
 ALL_CHAT_MODELS = {
-    "Gemini 2.5 Flash":                ("gemini-flash",  api_key),
-    "Gemini 2.5 Pro":                  ("gemini-pro",    api_key),
-    "Groq LLaMA 3.3 70B":              ("groq-llama",    groq_key),
-    "Groq LLaMA 3.1 8B (سريع)":       ("groq-llama8b",  groq_key),
-    "Groq Qwen 2.5 32B":               ("groq-qwen",     groq_key),
-    "OpenRouter DeepSeek R1 (مجاني)":  ("or-deepseek",   openrouter_key),
-    "OpenRouter Llama 3.3 70B (مجاني)":("or-llama",      openrouter_key),
-    "OpenRouter DeepSeek V3 (مجاني)":  ("or-dsv3",       openrouter_key),
-    "DeepSeek R1 (محلي)":              ("deepseek-local", None),
+    "Gemini 2.5 Flash":                  ("gemini-flash",   api_key),
+    "Gemini 2.5 Pro":                    ("gemini-pro",     api_key),
+    "Groq LLaMA 3.3 70B":                ("groq-llama",     groq_key),
+    "Groq LLaMA 3.1 8B (سريع)":         ("groq-llama8b",   groq_key),
+    "Groq Qwen3 32B":                    ("groq-qwen3",     groq_key),
+    "Groq Llama 4 Scout":                ("groq-llama4",    groq_key),
+    "OpenRouter Auto (أفضل مجاني)":      ("or-auto",        openrouter_key),
+    "OpenRouter DeepSeek R1 (مجاني)":    ("or-deepseek",    openrouter_key),
+    "OpenRouter Llama 3.3 70B (مجاني)":  ("or-llama",       openrouter_key),
+    "OpenRouter DeepSeek V3 (مجاني)":    ("or-dsv3",        openrouter_key),
+    "DeepSeek R1 (محلي)":                ("deepseek-local", None),
 }
 
 # كل النماذج تظهر دائماً — التحقق من المفتاح يتم عند الاستخدام فقط
@@ -236,11 +238,13 @@ def generate_image(model_key, prompt):
 GROQ_MODEL_IDS = {
     "groq-llama":   "llama-3.3-70b-versatile",
     "groq-llama8b": "llama-3.1-8b-instant",
-    "groq-qwen":    "qwen-2.5-32b",
+    "groq-qwen3":   "qwen/qwen3-32b",
+    "groq-llama4":  "meta-llama/llama-4-scout-17b-16e-instruct",
 }
 
 OR_MODEL_IDS = {
-    "or-deepseek": "deepseek/deepseek-r1-distill-llama-70b:free",
+    "or-auto":     "openrouter/auto",
+    "or-deepseek": "deepseek/deepseek-r1:free",
     "or-llama":    "meta-llama/llama-3.3-70b-instruct:free",
     "or-dsv3":     "deepseek/deepseek-chat-v3-0324:free",
 }
