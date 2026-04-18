@@ -32,26 +32,30 @@ together_key   = st.secrets.get("TOGETHER_API_KEY")
 ideogram_key   = st.secrets.get("IDEOGRAM_API_KEY")
 groq_key       = st.secrets.get("GROQ_API_KEY")
 openrouter_key = st.secrets.get("OPENROUTER_API_KEY")
+anthropic_key  = st.secrets.get("ANTHROPIC_API_KEY")
 
 if api_key:
     genai.configure(api_key=api_key)
-elif not groq_key:
-    st.error("⚠️ يجب وجود GEMINI_API_KEY أو GROQ_API_KEY على الأقل!")
+if not any([api_key, groq_key, anthropic_key, openrouter_key]):
+    st.error("⚠️ يجب وجود مفتاح API واحد على الأقل!")
     st.stop()
 
 # --- 3. قوائم النماذج ---
 ALL_CHAT_MODELS = {
-    "Gemini 2.5 Flash":                  ("gemini-flash",   api_key),
-    "Gemini 2.5 Pro":                    ("gemini-pro",     api_key),
-    "Groq LLaMA 3.3 70B":                ("groq-llama",     groq_key),
-    "Groq LLaMA 3.1 8B (سريع)":         ("groq-llama8b",   groq_key),
-    "Groq Qwen3 32B":                    ("groq-qwen3",     groq_key),
-    "Groq Llama 4 Scout":                ("groq-llama4",    groq_key),
-    "OpenRouter Auto (أفضل مجاني)":      ("or-auto",        openrouter_key),
-    "OpenRouter DeepSeek R1 (مجاني)":    ("or-deepseek",    openrouter_key),
-    "OpenRouter Llama 3.3 70B (مجاني)":  ("or-llama",       openrouter_key),
-    "OpenRouter DeepSeek V3 (مجاني)":    ("or-dsv3",        openrouter_key),
-    "DeepSeek R1 (محلي)":                ("deepseek-local", None),
+    "Gemini 2.5 Flash":                       ("gemini-flash",    api_key),
+    "Gemini 2.5 Pro":                         ("gemini-pro",      api_key),
+    "Claude Sonnet 4 ★":                      ("claude-sonnet",   anthropic_key),
+    "Claude Haiku 4 (سريع)":                  ("claude-haiku",    anthropic_key),
+    "Claude عبر OpenRouter (مجاني)":          ("or-claude",       openrouter_key),
+    "Groq LLaMA 3.3 70B":                     ("groq-llama",      groq_key),
+    "Groq LLaMA 3.1 8B (سريع)":              ("groq-llama8b",    groq_key),
+    "Groq Qwen3 32B":                         ("groq-qwen3",      groq_key),
+    "Groq Llama 4 Scout":                     ("groq-llama4",     groq_key),
+    "OpenRouter Auto (أفضل مجاني)":           ("or-auto",         openrouter_key),
+    "OpenRouter DeepSeek R1 (مجاني)":         ("or-deepseek",     openrouter_key),
+    "OpenRouter Llama 3.3 70B (مجاني)":       ("or-llama",        openrouter_key),
+    "OpenRouter DeepSeek V3 (مجاني)":         ("or-dsv3",         openrouter_key),
+    "DeepSeek R1 (محلي)":                     ("deepseek-local",  None),
 }
 
 # كل النماذج تظهر دائماً — التحقق من المفتاح يتم عند الاستخدام فقط
@@ -244,6 +248,7 @@ GROQ_MODEL_IDS = {
 
 OR_MODEL_IDS = {
     "or-auto":     "openrouter/auto",
+    "or-claude":   "anthropic/claude-3-haiku:free",
     "or-deepseek": "deepseek/deepseek-r1:free",
     "or-llama":    "meta-llama/llama-3.3-70b-instruct:free",
     "or-dsv3":     "deepseek/deepseek-chat-v3-0324:free",
@@ -254,9 +259,31 @@ GEMINI_MODEL_IDS = {
     "gemini-pro":   "models/gemini-2.5-pro",
 }
 
+CLAUDE_MODEL_IDS = {
+    "claude-sonnet": "claude-sonnet-4-5",
+    "claude-haiku":  "claude-haiku-4-5-20251001",
+}
+
 def get_chat_response(user_text, engine, persona, level, file=None):
     model_id = MODEL_MAP[engine]
     system_prompt = f"أنت {persona} بمستوى تفكير {level}. أجب بالعربية دائماً."
+
+    # Claude عبر Anthropic API الرسمي
+    if model_id in CLAUDE_MODEL_IDS:
+        if not anthropic_key:
+            raise Exception("❌ هذا النموذج يحتاج ANTHROPIC_API_KEY — أضفه في Streamlit Secrets أو اختر نموذجاً آخر")
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            msg = client.messages.create(
+                model=CLAUDE_MODEL_IDS[model_id],
+                max_tokens=2048,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_text}]
+            )
+            return msg.content[0].text
+        except ImportError:
+            raise Exception("❌ مكتبة anthropic غير مثبتة — نفّذ: pip install anthropic")
 
     # Groq
     if model_id in GROQ_MODEL_IDS:
@@ -406,6 +433,7 @@ with st.sidebar:
 
     with st.expander("🔑 تشخيص المفاتيح"):
         st.write("GEMINI:",      "✅" if api_key        else "❌")
+        st.write("ANTHROPIC:",    "✅" if anthropic_key  else "❌")
         st.write("GROQ:",        "✅" if groq_key       else "❌")
         st.write("OPENROUTER:",  "✅" if openrouter_key else "❌")
         st.write("HF:",          "✅" if hf_key         else "❌")
