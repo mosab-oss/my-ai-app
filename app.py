@@ -13,7 +13,7 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # --- 1. الإعدادات ---
-st.set_page_config(page_title="منصة مصعب v20", layout="wide", page_icon="🎤")
+st.set_page_config(page_title="منصة مصعب v21", layout="wide", page_icon="🎤")
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
@@ -503,6 +503,138 @@ def translate_to_english(text):
     return text
 
 
+
+# ═══════════════════════════════════════════════════
+# --- وحدة البيانات المالية المباشرة ---
+# ═══════════════════════════════════════════════════
+
+@st.cache_data(ttl=60)
+def get_stock_data(symbol: str):
+    """جلب بيانات السهم من Yahoo Finance (مجاني)"""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1mo"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+        data = r.json()
+        meta = data["chart"]["result"][0]["meta"]
+        quotes = data["chart"]["result"][0]["indicators"]["quote"][0]
+        timestamps = data["chart"]["result"][0]["timestamp"]
+        return {
+            "symbol": symbol.upper(),
+            "name": meta.get("shortName", symbol),
+            "price": round(meta.get("regularMarketPrice", 0), 2),
+            "prev_close": round(meta.get("chartPreviousClose", 0), 2),
+            "change": round(meta.get("regularMarketPrice", 0) - meta.get("chartPreviousClose", 0), 2),
+            "change_pct": round(((meta.get("regularMarketPrice", 0) - meta.get("chartPreviousClose", 0)) / max(meta.get("chartPreviousClose", 1), 1)) * 100, 2),
+            "volume": meta.get("regularMarketVolume", 0),
+            "currency": meta.get("currency", "USD"),
+            "market_state": meta.get("marketState", ""),
+            "closes": [round(c, 2) if c else None for c in quotes.get("close", [])],
+            "timestamps": timestamps,
+            "high52": round(meta.get("fiftyTwoWeekHigh", 0), 2),
+            "low52": round(meta.get("fiftyTwoWeekLow", 0), 2),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@st.cache_data(ttl=300)
+def get_forex_rates(base="USD"):
+    """جلب أسعار الصرف (مجاني بلا مفتاح)"""
+    try:
+        r = requests.get(f"https://api.exchangerate-api.com/v4/latest/{base}", timeout=10)
+        data = r.json()
+        rates = data.get("rates", {})
+        wanted = ["EUR", "GBP", "JPY", "SAR", "AED", "EGP", "TRY", "CHF", "CNY", "CAD"]
+        return {
+            "base": base,
+            "date": data.get("date", ""),
+            "rates": {k: round(v, 4) for k, v in rates.items() if k in wanted}
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@st.cache_data(ttl=120)
+def get_crypto_prices():
+    """جلب أسعار العملات الرقمية (مجاني)"""
+    try:
+        coins = "bitcoin,ethereum,binancecoin,ripple,cardano,solana,dogecoin"
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coins}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
+        r = requests.get(url, timeout=10)
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@st.cache_data(ttl=3600)
+def get_market_news(query="stock market"):
+    """جلب أخبار السوق عبر GNews (مجاني)"""
+    try:
+        url = f"https://gnews.io/api/v4/search?q={urllib.parse.quote(query)}&lang=ar&max=5&token=free"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json().get("articles", [])
+        # بديل مجاني بدون مفتاح
+        url2 = f"https://newsdata.io/api/1/news?q={urllib.parse.quote(query)}&language=ar&category=business"
+        r2 = requests.get(url2, timeout=10)
+        if r2.status_code == 200:
+            return r2.json().get("results", [])[:5]
+        return []
+    except:
+        return []
+
+
+def get_ai_investment_advice(data_context: str, question: str, engine: str, persona: str) -> str:
+    """الحصول على تحليل استثماري من الذكاء الاصطناعي"""
+    system = """أنت مستشار مالي واستثماري محترف وخبير. تقدم تحليلاً دقيقاً وموضوعياً للأسواق المالية.
+تشمل تحليلاتك:
+- تقييم المخاطر بوضوح
+- التوصيات المبنية على البيانات
+- التحذيرات اللازمة
+- المقارنة مع بدائل الاستثمار
+تذكر دائماً: هذا تحليل للمعلومات وليس توصية استثمارية رسمية. المستخدم مسؤول عن قراراته."""
+
+    full_prompt = f"""البيانات المالية الحالية:
+{data_context}
+
+سؤال المستخدم: {question}
+
+قدم تحليلاً استثمارياً شاملاً باللغة العربية يتضمن:
+1. تقييم الوضع الحالي
+2. نقاط القوة والضعف
+3. المخاطر المحتملة
+4. توصيات مبنية على البيانات
+5. تحذير: هذا تحليل معلوماتي فقط"""
+
+    model_id = MODEL_MAP.get(engine, "gemini-flash")
+
+    if model_id in GROQ_MODEL_IDS and groq_key and GROQ_AVAILABLE:
+        client = Groq(api_key=groq_key)
+        r = client.chat.completions.create(
+            model=GROQ_MODEL_IDS[model_id],
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": full_prompt}],
+            max_tokens=2048
+        )
+        return r.choices[0].message.content
+
+    if model_id in CLAUDE_MODEL_IDS and anthropic_key:
+        import anthropic
+        client = anthropic.Anthropic(api_key=anthropic_key)
+        msg = client.messages.create(
+            model=CLAUDE_MODEL_IDS[model_id], max_tokens=2048,
+            system=system, messages=[{"role": "user", "content": full_prompt}]
+        )
+        return msg.content[0].text
+
+    if api_key:
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        return model.generate_content(f"{system}\n\n{full_prompt}").text
+
+    raise Exception("لا يوجد نموذج متاح")
+
+
+# ═══════════════════════════════════════════════════
 # --- قيم افتراضية لتجنب أخطاء المتغيرات ---
 audio_record   = None
 uploaded_file  = None
@@ -514,12 +646,13 @@ img_style      = "واقعي"
 translate_prompt = True
 use_streaming  = True
 auto_tts       = True
+finance_symbol = "AAPL"
 
 # --- 6. القائمة الجانبية ---
 with st.sidebar:
-    st.header("🎮 مركز التحكم v20")
+    st.header("🎮 مركز التحكم v21")
 
-    mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور"])
+    mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور", "📈 مستشار استثماري"])
     st.divider()
 
     if mode == "💬 دردشة":
@@ -590,6 +723,14 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "generated_images" not in st.session_state:
     st.session_state.generated_images = []
+if "stock_context" not in st.session_state:
+    st.session_state.stock_context = {}
+if "forex_context" not in st.session_state:
+    st.session_state.forex_context = {}
+if "crypto_context" not in st.session_state:
+    st.session_state.crypto_context = {}
+if "investment_question" not in st.session_state:
+    st.session_state.investment_question = ""
 
 # --- 8. وضع الدردشة ---
 if mode == "💬 دردشة":
@@ -725,3 +866,213 @@ else:
                         st.warning(f"⏳ {err}")
                     else:
                         st.error(f"❌ فشل في توليد الصورة: {err}")
+
+# --- 10. وضع المستشار الاستثماري ---
+if mode == "📈 مستشار استثماري":
+    st.subheader("📈 المستشار الاستثماري الذكي")
+    st.caption("بيانات مباشرة من الأسواق العالمية + تحليل بالذكاء الاصطناعي")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 الأسهم", "💱 العملات", "₿ العملات الرقمية", "🤖 المستشار"])
+
+    # ─── تبويب الأسهم ───
+    with tab1:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            symbols_input = st.text_input(
+                "رموز الأسهم (مفصولة بفاصلة):",
+                value="AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA",
+                placeholder="AAPL, TSLA, MSFT..."
+            )
+        with col2:
+            st.write("")
+            fetch_btn = st.button("🔄 تحديث", key="fetch_stocks")
+
+        symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
+
+        if symbols:
+            cols = st.columns(min(len(symbols), 3))
+            stock_data_all = {}
+            for i, sym in enumerate(symbols[:6]):
+                with st.spinner(f"جاري جلب {sym}..."):
+                    data = get_stock_data(sym)
+                stock_data_all[sym] = data
+                with cols[i % 3]:
+                    if "error" not in data:
+                        arrow = "▲" if data["change"] >= 0 else "▼"
+                        color = "🟢" if data["change"] >= 0 else "🔴"
+                        st.metric(
+                            label=f"{color} {data['symbol']}",
+                            value=f"{data['price']} {data['currency']}",
+                            delta=f"{arrow} {data['change']} ({data['change_pct']}%)"
+                        )
+                        with st.expander("تفاصيل"):
+                            st.write(f"**الاسم:** {data['name']}")
+                            st.write(f"**أعلى 52 أسبوع:** {data['high52']}")
+                            st.write(f"**أدنى 52 أسبوع:** {data['low52']}")
+                            st.write(f"**الحجم:** {data['volume']:,}")
+                            st.write(f"**حالة السوق:** {data['market_state']}")
+                            if data["closes"]:
+                                valid = [c for c in data["closes"] if c]
+                                if valid:
+                                    st.line_chart(valid)
+                    else:
+                        st.error(f"❌ {sym}: {data['error']}")
+
+            # حفظ البيانات للمستشار
+            if "stock_context" not in st.session_state:
+                st.session_state.stock_context = {}
+            st.session_state.stock_context.update(stock_data_all)
+
+    # ─── تبويب العملات ───
+    with tab2:
+        base_curr = st.selectbox("العملة الأساسية:", ["USD", "EUR", "GBP", "SAR", "AED", "EGP"], key="base_curr")
+        with st.spinner("جاري جلب أسعار الصرف..."):
+            forex = get_forex_rates(base_curr)
+
+        if "error" not in forex:
+            st.success(f"آخر تحديث: {forex['date']}")
+            rates = forex["rates"]
+            cols = st.columns(4)
+            currency_names = {
+                "EUR": "يورو 🇪🇺", "GBP": "جنيه إسترليني 🇬🇧",
+                "JPY": "ين ياباني 🇯🇵", "SAR": "ريال سعودي 🇸🇦",
+                "AED": "درهم إماراتي 🇦🇪", "EGP": "جنيه مصري 🇪🇬",
+                "TRY": "ليرة تركية 🇹🇷", "CHF": "فرنك سويسري 🇨🇭",
+                "CNY": "يوان صيني 🇨🇳", "CAD": "دولار كندي 🇨🇦",
+            }
+            for i, (curr, rate) in enumerate(rates.items()):
+                with cols[i % 4]:
+                    st.metric(
+                        label=currency_names.get(curr, curr),
+                        value=f"{rate}",
+                        delta=None
+                    )
+
+            # حاسبة تحويل العملات
+            st.divider()
+            st.subheader("🔄 حاسبة تحويل العملات")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                amount = st.number_input("المبلغ:", value=100.0, min_value=0.01)
+            with c2:
+                target = st.selectbox("إلى:", list(rates.keys()), key="target_curr")
+            with c3:
+                if target in rates:
+                    converted = round(amount * rates[target], 2)
+                    st.metric("النتيجة:", f"{converted} {target}")
+
+            st.session_state.forex_context = forex
+        else:
+            st.error(f"❌ خطأ في جلب العملات: {forex['error']}")
+
+    # ─── تبويب العملات الرقمية ───
+    with tab3:
+        with st.spinner("جاري جلب أسعار العملات الرقمية..."):
+            crypto = get_crypto_prices()
+
+        coin_names = {
+            "bitcoin": ("₿ Bitcoin", "BTC"),
+            "ethereum": ("Ξ Ethereum", "ETH"),
+            "binancecoin": ("BNB", "BNB"),
+            "ripple": ("XRP", "XRP"),
+            "cardano": ("ADA", "ADA"),
+            "solana": ("SOL", "SOL"),
+            "dogecoin": ("DOGE 🐕", "DOGE"),
+        }
+
+        if "error" not in crypto:
+            cols = st.columns(3)
+            for i, (coin_id, data) in enumerate(crypto.items()):
+                name, symbol = coin_names.get(coin_id, (coin_id, coin_id))
+                price = data.get("usd", 0)
+                change = data.get("usd_24h_change", 0)
+                mcap = data.get("usd_market_cap", 0)
+                with cols[i % 3]:
+                    st.metric(
+                        label=f"{name} ({symbol})",
+                        value=f"${price:,.4f}" if price < 1 else f"${price:,.2f}",
+                        delta=f"{round(change, 2)}% (24h)"
+                    )
+                    st.caption(f"القيمة السوقية: ${mcap/1e9:.1f}B")
+            st.session_state.crypto_context = crypto
+        else:
+            st.error(f"❌ {crypto['error']}")
+
+    # ─── تبويب المستشار ───
+    with tab4:
+        st.subheader("🤖 المستشار الاستثماري الذكي")
+        st.info("يستخدم المستشار البيانات المالية المباشرة لتقديم تحليل شامل. اذهب لتبويب الأسهم أو العملات أولاً لتحميل البيانات.")
+
+        # بناء السياق المالي
+        context_parts = []
+        if st.session_state.get("stock_context"):
+            stocks_str = []
+            for sym, d in st.session_state.stock_context.items():
+                if "error" not in d:
+                    stocks_str.append(
+                        f"{d['symbol']} ({d['name']}): {d['price']} {d['currency']}, "
+                        f"تغيير: {d['change_pct']}%, "
+                        f"أعلى 52 أسبوع: {d['high52']}, أدنى: {d['low52']}"
+                    )
+            if stocks_str:
+                context_parts.append("أسعار الأسهم الحالية:\n" + "\n".join(stocks_str))
+
+        if st.session_state.get("forex_context"):
+            fx = st.session_state.forex_context
+            rates_str = ", ".join([f"{k}: {v}" for k, v in fx["rates"].items()])
+            context_parts.append(f"أسعار الصرف ({fx['base']} مقابل): {rates_str}")
+
+        if st.session_state.get("crypto_context"):
+            crypto_data = st.session_state.crypto_context
+            crypto_str = []
+            for coin, d in crypto_data.items():
+                if "error" not in d:
+                    crypto_str.append(
+                        f"{coin}: ${d.get('usd', 0):,.2f} (تغيير 24h: {round(d.get('usd_24h_change', 0), 2)}%)"
+                    )
+            if crypto_str:
+                context_parts.append("أسعار العملات الرقمية:\n" + "\n".join(crypto_str))
+
+        data_context = "\n\n".join(context_parts) if context_parts else "لم يتم تحميل بيانات بعد — يرجى فتح تبويب الأسهم أو العملات أولاً"
+
+        # أسئلة جاهزة
+        st.write("**أسئلة جاهزة:**")
+        q_cols = st.columns(2)
+        preset_questions = [
+            "ما هو أفضل سهم للشراء الآن بناءً على البيانات؟",
+            "هل العملات الرقمية استثمار جيد الآن؟",
+            "حلل مخاطر المحفظة الحالية",
+            "ما توقعك لسعر الدولار أمام العملات العربية؟",
+            "أيهما أفضل: أسهم التكنولوجيا أم الذهب؟",
+            "كيف أوزع استثمار 10,000 دولار بحكمة؟",
+        ]
+        for i, q in enumerate(preset_questions):
+            with q_cols[i % 2]:
+                if st.button(q, key=f"preset_{i}", use_container_width=True):
+                    st.session_state.investment_question = q
+
+        st.divider()
+        investment_q = st.text_area(
+            "أو اكتب سؤالك الاستثماري:",
+            value=st.session_state.get("investment_question", ""),
+            placeholder="مثال: هل يجب أن أشتري أسهم NVDA الآن؟",
+            height=100,
+            key="investment_input"
+        )
+
+        if st.button("🔍 تحليل الآن", type="primary", use_container_width=True):
+            if investment_q.strip():
+                with st.spinner("🧠 المستشار يحلل البيانات..."):
+                    try:
+                        advice = get_ai_investment_advice(
+                            data_context, investment_q, engine_choice, persona
+                        )
+                        st.markdown("### 📋 التحليل الاستثماري")
+                        st.markdown(advice)
+                        st.warning("⚠️ تنبيه: هذا تحليل معلوماتي فقط وليس توصية استثمارية رسمية. استشر خبيراً مالياً معتمداً قبل اتخاذ أي قرار.")
+                        if auto_tts:
+                            st.audio(text_to_speech(advice[:500]), format="audio/mp3")
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+            else:
+                st.warning("اكتب سؤالاً أولاً")
