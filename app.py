@@ -13,7 +13,7 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # --- 1. الإعدادات ---
-st.set_page_config(page_title="منصة مصعب v19", layout="wide", page_icon="🎤")
+st.set_page_config(page_title="منصة مصعب v20", layout="wide", page_icon="🎤")
 st.markdown("""
     <style>
     .stApp { direction: rtl; text-align: right; }
@@ -363,11 +363,128 @@ def get_chat_response(user_text, engine, persona, level, file=None):
 
 
 def text_to_speech(text):
-    clean = text[:400].replace("*", "").replace("#", "")
+    """تحويل النص لصوت — gTTS مجاني"""
+    clean = text[:500].replace("*", "").replace("#", "")
     tts = gTTS(text=clean, lang='ar')
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     return fp
+
+
+def speech_to_text(audio_bytes):
+    """تحويل الصوت لنص عبر Groq Whisper (مجاني) أو Gemini"""
+    if groq_key and GROQ_AVAILABLE:
+        try:
+            client = Groq(api_key=groq_key)
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "audio.wav"
+            result = client.audio.transcriptions.create(
+                model="whisper-large-v3-turbo",
+                file=audio_file,
+                language="ar",
+            )
+            return result.text.strip()
+        except Exception as e:
+            st.toast(f"⚠️ Whisper: {e} — أجرّب Gemini...")
+
+    if api_key:
+        try:
+            import google.generativeai as genai_mod
+            model = genai_mod.GenerativeModel("models/gemini-2.5-flash")
+            audio_part = {"mime_type": "audio/wav", "data": audio_bytes}
+            result = model.generate_content([
+                "حوّل هذا الصوت إلى نص فقط بدون أي تعليق:",
+                audio_part
+            ])
+            return result.text.strip()
+        except Exception as e:
+            st.toast(f"⚠️ Gemini STT: {e}")
+
+    return None
+
+
+def stream_chat_response(user_text, engine, persona, level):
+    """بث الرد كلمة بكلمة — يدعم Groq وOpenRouter وGemini وClaude"""
+    model_id = MODEL_MAP.get(engine, "")
+    system_prompt = f"أنت {persona} بمستوى تفكير {level}. أجب بالعربية دائماً."
+
+    # Groq streaming
+    if model_id in GROQ_MODEL_IDS and groq_key and GROQ_AVAILABLE:
+        client = Groq(api_key=groq_key)
+        stream = client.chat.completions.create(
+            model=GROQ_MODEL_IDS[model_id],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_text}
+            ],
+            max_tokens=2048,
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            if delta:
+                yield delta
+        return
+
+    # OpenRouter streaming
+    if model_id in OR_MODEL_IDS and openrouter_key:
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
+        models_to_try = (
+            ["anthropic/claude-3.5-haiku:free", "anthropic/claude-3-haiku:free", "openrouter/auto"]
+            if model_id == "or-claude"
+            else [OR_MODEL_IDS[model_id]]
+        )
+        for m in models_to_try:
+            try:
+                stream = client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_text}
+                    ],
+                    stream=True,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        yield delta
+                return
+            except Exception as e:
+                if "404" in str(e) or "No endpoints" in str(e):
+                    continue
+                raise
+
+    # Claude streaming
+    if model_id in CLAUDE_MODEL_IDS and anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            with client.messages.stream(
+                model=CLAUDE_MODEL_IDS[model_id],
+                max_tokens=2048,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_text}]
+            ) as stream:
+                for text in stream.text_stream:
+                    yield text
+            return
+        except ImportError:
+            pass
+
+    # Gemini streaming
+    if api_key:
+        gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
+        model = genai.GenerativeModel(gemini_id)
+        response = model.generate_content(
+            f"بصفتك {persona} بمستوى {level}:\n{user_text}",
+            stream=True
+        )
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+        return
+
+    raise Exception("لا يوجد نموذج متاح للبث")
 
 
 def translate_to_english(text):
@@ -395,10 +512,12 @@ thinking_level = "High"
 image_model    = list(IMAGE_MODELS.keys())[0] if IMAGE_MODELS else None
 img_style      = "واقعي"
 translate_prompt = True
+use_streaming  = True
+auto_tts       = True
 
 # --- 6. القائمة الجانبية ---
 with st.sidebar:
-    st.header("🎮 مركز التحكم v19")
+    st.header("🎮 مركز التحكم v20")
 
     mode = st.radio("🔄 وضع العمل:", ["💬 دردشة", "🎨 توليد صور"])
     st.divider()
@@ -411,6 +530,8 @@ with st.sidebar:
             just_once=True,
             key="sidebar_mic"
         )
+        use_streaming = st.toggle("⚡ بث مباشر للردود", value=True)
+        auto_tts      = st.toggle("🔊 قراءة الرد صوتياً", value=True)
         thinking_level = st.select_slider(
             "🧠 مستوى التفكير:",
             options=["Low", "Medium", "High"],
@@ -420,15 +541,18 @@ with st.sidebar:
             "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
         ])
         engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
-        # تحذير إذا النموذج المختار يحتاج مفتاح غير موجود
         selected_key = MODEL_MAP.get(engine_choice, "")
         key_needed = {
-            "groq-llama": groq_key, "groq-mixtral": groq_key, "groq-deepseek": groq_key,
-            "or-deepseek": openrouter_key, "or-qwen": openrouter_key,
+            "groq-llama": groq_key, "groq-llama8b": groq_key,
+            "groq-qwen3": groq_key, "groq-llama4": groq_key,
+            "or-deepseek": openrouter_key, "or-llama": openrouter_key,
+            "or-auto": openrouter_key, "or-claude": openrouter_key,
+            "or-dsv3": openrouter_key,
             "gemini-flash": api_key, "gemini-pro": api_key,
+            "claude-sonnet": anthropic_key, "claude-haiku": anthropic_key,
         }
         if selected_key in key_needed and not key_needed[selected_key]:
-            st.warning(f"⚠️ هذا النموذج يحتاج مفتاح API غير موجود")
+            st.warning("⚠️ هذا النموذج يحتاج مفتاح API غير موجود")
         uploaded_file = st.file_uploader(
             "📂 رفع ملف:",
             type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
@@ -475,22 +599,52 @@ if mode == "💬 دردشة":
 
     prompt = st.chat_input("اكتب سؤالك أو استخدم الميكروفون...")
 
-    if prompt or audio_record:
-        user_txt = prompt if prompt else "🎤 [رسالة صوتية]"
+    # معالجة الصوت — STT
+    user_txt = None
+    if audio_record:
+        with st.spinner("🎙️ جاري تحويل الصوت لنص..."):
+            transcribed = speech_to_text(audio_record["bytes"])
+            if transcribed:
+                user_txt = transcribed
+                st.toast(f"🎙️ فهمت: {transcribed[:60]}...")
+            else:
+                st.warning("⚠️ لم أتمكن من فهم الصوت، حاول مرة أخرى")
+    elif prompt:
+        user_txt = prompt
+
+    if user_txt:
         st.session_state.messages.append({"role": "user", "content": user_txt})
         with st.chat_message("user"):
             st.markdown(user_txt)
+
         with st.chat_message("assistant"):
-            with st.spinner("جاري المعالجة..."):
-                try:
-                    reply = get_chat_response(
-                        user_txt, engine_choice, persona, thinking_level, uploaded_file
-                    )
-                    st.markdown(reply)
-                    st.audio(text_to_speech(reply), format="audio/mp3")
-                    st.session_state.messages.append({"role": "assistant", "content": reply})
-                except Exception as e:
-                    st.error(f"❌ فشل في المعالجة: {e}")
+            try:
+                if use_streaming:
+                    # البث المباشر كلمة بكلمة
+                    reply_placeholder = st.empty()
+                    full_reply = ""
+                    for chunk in stream_chat_response(
+                        user_txt, engine_choice, persona, thinking_level
+                    ):
+                        full_reply += chunk
+                        reply_placeholder.markdown(full_reply + "▌")
+                    reply_placeholder.markdown(full_reply)
+                    reply = full_reply
+                else:
+                    with st.spinner("جاري المعالجة..."):
+                        reply = get_chat_response(
+                            user_txt, engine_choice, persona, thinking_level, uploaded_file
+                        )
+                        st.markdown(reply)
+
+                # قراءة الرد صوتياً
+                if auto_tts and reply:
+                    st.audio(text_to_speech(reply), format="audio/mp3", autoplay=True)
+
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+
+            except Exception as e:
+                st.error(f"❌ فشل في المعالجة: {e}")
 
 # --- 9. وضع توليد الصور ---
 else:
