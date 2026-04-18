@@ -248,7 +248,7 @@ GROQ_MODEL_IDS = {
 
 OR_MODEL_IDS = {
     "or-auto":     "openrouter/auto",
-    "or-claude":   "anthropic/claude-3-haiku:free",
+    "or-claude":   "anthropic/claude-3.5-haiku:free",
     "or-deepseek": "deepseek/deepseek-r1:free",
     "or-llama":    "meta-llama/llama-3.3-70b-instruct:free",
     "or-dsv3":     "deepseek/deepseek-chat-v3-0324:free",
@@ -310,14 +310,31 @@ def get_chat_response(user_text, engine, persona, level, file=None):
             base_url="https://openrouter.ai/api/v1",
             api_key=openrouter_key,
         )
-        r = client.chat.completions.create(
-            model=OR_MODEL_IDS[model_id],
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_text}
-            ],
-        )
-        return r.choices[0].message.content
+        # قائمة fallback لـ Claude المجاني
+        claude_free_fallback = [
+            "anthropic/claude-3.5-haiku:free",
+            "anthropic/claude-3-haiku:free",
+            "anthropic/claude-3-opus:free",
+            "openrouter/auto",
+        ] if model_id == "or-claude" else [OR_MODEL_IDS[model_id]]
+
+        last_err = None
+        for model_name in claude_free_fallback:
+            try:
+                r = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_text}
+                    ],
+                )
+                return r.choices[0].message.content
+            except Exception as e:
+                last_err = str(e)
+                if "404" in last_err or "No endpoints" in last_err:
+                    continue
+                raise Exception(last_err)
+        raise Exception(f"❌ Claude المجاني غير متاح حالياً: {last_err}")
 
     # DeepSeek محلي
     if model_id == "deepseek-local":
