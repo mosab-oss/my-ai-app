@@ -41,20 +41,27 @@ elif not groq_key:
 
 # --- 3. قوائم النماذج ---
 ALL_CHAT_MODELS = {
-    "Gemini 2.5 Flash":          ("gemini-flash",   api_key),
-    "Gemini 2.5 Pro":            ("gemini-pro",     api_key),
-    "Groq LLaMA 3.3 70B":        ("groq-llama",     groq_key),
-    "Groq Mixtral 8x7B":         ("groq-mixtral",   groq_key),
-    "Groq DeepSeek R1":          ("groq-deepseek",  groq_key),
-    "OpenRouter DeepSeek R1":    ("or-deepseek",    openrouter_key),
-    "OpenRouter Qwen 2.5 72B":   ("or-qwen",        openrouter_key),
-    "DeepSeek R1 (محلي)":        ("deepseek-local", None),
+    "Gemini 2.5 Flash":                ("gemini-flash",  api_key),
+    "Gemini 2.5 Pro":                  ("gemini-pro",    api_key),
+    "Groq LLaMA 3.3 70B":              ("groq-llama",    groq_key),
+    "Groq LLaMA 3.1 8B (سريع)":       ("groq-llama8b",  groq_key),
+    "Groq Qwen 2.5 32B":               ("groq-qwen",     groq_key),
+    "OpenRouter DeepSeek R1 (مجاني)":  ("or-deepseek",   openrouter_key),
+    "OpenRouter Llama 3.3 70B (مجاني)":("or-llama",      openrouter_key),
+    "OpenRouter DeepSeek V3 (مجاني)":  ("or-dsv3",       openrouter_key),
+    "DeepSeek R1 (محلي)":              ("deepseek-local", None),
 }
 
+# كل النماذج تظهر دائماً — التحقق من المفتاح يتم عند الاستخدام فقط
 MODEL_MAP = {
     name: key
     for name, (key, secret) in ALL_CHAT_MODELS.items()
-    if secret or key == "deepseek-local"
+}
+
+# علامة لمعرفة أي النماذج تحتاج مفتاح غير متاح (لعرض تحذير)
+MODEL_NEEDS_KEY = {
+    name: (secret is None and key != "deepseek-local")
+    for name, (key, secret) in ALL_CHAT_MODELS.items()
 }
 
 ALL_IMAGE_MODELS = {
@@ -227,19 +234,20 @@ def generate_image(model_key, prompt):
 # --- 5. دوال الدردشة ---
 
 GROQ_MODEL_IDS = {
-    "groq-llama":    "llama-3.3-70b-versatile",
-    "groq-mixtral":  "mixtral-8x7b-32768",
-    "groq-deepseek": "deepseek-r1-distill-llama-70b",
+    "groq-llama":   "llama-3.3-70b-versatile",
+    "groq-llama8b": "llama-3.1-8b-instant",
+    "groq-qwen":    "qwen-2.5-32b",
 }
 
 OR_MODEL_IDS = {
-    "or-deepseek": "deepseek/deepseek-r1:free",
-    "or-qwen":     "qwen/qwen-2.5-72b-instruct:free",
+    "or-deepseek": "deepseek/deepseek-r1-distill-llama-70b:free",
+    "or-llama":    "meta-llama/llama-3.3-70b-instruct:free",
+    "or-dsv3":     "deepseek/deepseek-chat-v3-0324:free",
 }
 
 GEMINI_MODEL_IDS = {
     "gemini-flash": "models/gemini-2.5-flash",
-    "gemini-pro":   "models/gemini-2.5-pro-preview-03-25",
+    "gemini-pro":   "models/gemini-2.5-pro",
 }
 
 def get_chat_response(user_text, engine, persona, level, file=None):
@@ -247,7 +255,11 @@ def get_chat_response(user_text, engine, persona, level, file=None):
     system_prompt = f"أنت {persona} بمستوى تفكير {level}. أجب بالعربية دائماً."
 
     # Groq
-    if model_id in GROQ_MODEL_IDS and GROQ_AVAILABLE and groq_key:
+    if model_id in GROQ_MODEL_IDS:
+        if not groq_key:
+            raise Exception("❌ هذا النموذج يحتاج GROQ_API_KEY — أضفه في Streamlit Secrets أو اختر نموذجاً آخر")
+        if not GROQ_AVAILABLE:
+            raise Exception("❌ مكتبة groq غير مثبتة — نفّذ: pip install groq")
         client = Groq(api_key=groq_key)
         r = client.chat.completions.create(
             model=GROQ_MODEL_IDS[model_id],
@@ -260,7 +272,9 @@ def get_chat_response(user_text, engine, persona, level, file=None):
         return r.choices[0].message.content
 
     # OpenRouter (نماذج مجانية)
-    if model_id in OR_MODEL_IDS and openrouter_key:
+    if model_id in OR_MODEL_IDS:
+        if not openrouter_key:
+            raise Exception("❌ هذا النموذج يحتاج OPENROUTER_API_KEY — أضفه في Streamlit Secrets أو اختر نموذجاً آخر")
         client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=openrouter_key,
@@ -357,10 +371,16 @@ with st.sidebar:
         persona = st.selectbox("👤 الخبير:", [
             "أهل العلم", "خبير اللغات", "وكيل تنفيذي", "مساعد مبرمج"
         ])
-        if MODEL_MAP:
-            engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
-        else:
-            st.error("❌ لا يوجد أي نموذج دردشة متاح!")
+        engine_choice = st.selectbox("🎯 المحرك:", list(MODEL_MAP.keys()))
+        # تحذير إذا النموذج المختار يحتاج مفتاح غير موجود
+        selected_key = MODEL_MAP.get(engine_choice, "")
+        key_needed = {
+            "groq-llama": groq_key, "groq-mixtral": groq_key, "groq-deepseek": groq_key,
+            "or-deepseek": openrouter_key, "or-qwen": openrouter_key,
+            "gemini-flash": api_key, "gemini-pro": api_key,
+        }
+        if selected_key in key_needed and not key_needed[selected_key]:
+            st.warning(f"⚠️ هذا النموذج يحتاج مفتاح API غير موجود")
         uploaded_file = st.file_uploader(
             "📂 رفع ملف:",
             type=["pdf", "csv", "txt", "jpg", "png", "jpeg"]
