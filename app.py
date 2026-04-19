@@ -501,6 +501,59 @@ def get_crypto_prices():
 # ══════════════════════════════════════════
 # 12. دوال الدردشة
 # ══════════════════════════════════════════
+
+def is_quota_error(e):
+    """تحقق إذا كان الخطأ بسبب تجاوز الحصة"""
+    err = str(e).lower()
+    return any(x in err for x in ["quota", "rate limit", "429", "resource exhausted", "exceeded"])
+
+
+def fallback_response(user_text, sys_p):
+    """تبديل تلقائي للنموذج عند تجاوز الحصة — يجرب بالترتيب"""
+    # 1. Groq أولاً (مجاني وسريع وبلا حد يومي عملي)
+    if groq_key and GROQ_AVAILABLE:
+        try:
+            c = Groq(api_key=groq_key)
+            r = c.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role":"system","content":sys_p},{"role":"user","content":user_text}],
+                max_tokens=2048
+            )
+            st.toast("🔄 تم التبديل تلقائياً لـ Groq LLaMA")
+            return r.choices[0].message.content
+        except:
+            pass
+
+    # 2. OpenRouter (مجاني)
+    if openrouter_key:
+        try:
+            c = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
+            r = c.chat.completions.create(
+                model="openrouter/auto",
+                messages=[{"role":"system","content":sys_p},{"role":"user","content":user_text}]
+            )
+            st.toast("🔄 تم التبديل تلقائياً لـ OpenRouter")
+            return r.choices[0].message.content
+        except:
+            pass
+
+    # 3. Claude (مدفوع لكن موثوق)
+    if anthropic_key:
+        try:
+            import anthropic
+            c = anthropic.Anthropic(api_key=anthropic_key)
+            msg = c.messages.create(
+                model="claude-haiku-4-5-20251001", max_tokens=2048,
+                system=sys_p, messages=[{"role":"user","content":user_text}]
+            )
+            st.toast("🔄 تم التبديل تلقائياً لـ Claude Haiku")
+            return msg.content[0].text
+        except:
+            pass
+
+    raise Exception("❌ تجاوزت حصة Gemini اليومية (20 طلب) ولا يوجد بديل متاح. أضف GROQ_API_KEY أو OPENROUTER_API_KEY.")
+
+
 def get_chat_response(user_text, engine, persona, level, file=None):
     model_id = MODEL_MAP.get(engine, "gemini-flash")
     sys_p = "انت " + persona + " بمستوى " + level + ". اجب بالعربية."
@@ -539,16 +592,25 @@ def get_chat_response(user_text, engine, persona, level, file=None):
         r = c.chat.completions.create(model="deepseek-r1", messages=[{"role":"system","content":sys_p},{"role":"user","content":user_text}])
         return r.choices[0].message.content
 
-    if not api_key: raise Exception("لا يوجد مفتاح")
-    gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
-    model = genai.GenerativeModel(gemini_id)
-    parts = ["بصفتك " + persona + " بمستوى " + level + ":\n" + user_text]
-    if file:
-        if file.type.startswith("image"):
-            parts.append(Image.open(file))
-        else:
-            parts.append(file.read().decode("utf-8", errors="ignore"))
-    return model.generate_content(parts).text
+    # Gemini مع fallback تلقائي عند تجاوز الحصة
+    if not api_key:
+        return fallback_response(user_text, sys_p)
+
+    try:
+        gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
+        model = genai.GenerativeModel(gemini_id)
+        parts = ["بصفتك " + persona + " بمستوى " + level + ":\n" + user_text]
+        if file:
+            if file.type.startswith("image"):
+                parts.append(Image.open(file))
+            else:
+                parts.append(file.read().decode("utf-8", errors="ignore"))
+        return model.generate_content(parts).text
+    except Exception as e:
+        if is_quota_error(e):
+            st.warning("⚠️ تجاوزت حصة Gemini اليومية (20 طلب/يوم) — يتم التبديل تلقائياً...")
+            return fallback_response(user_text, sys_p)
+        raise
 
 
 def stream_chat_response(user_text, engine, persona, level):
@@ -589,14 +651,21 @@ def stream_chat_response(user_text, engine, persona, level):
             pass
 
     if api_key:
-        gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
-        model = genai.GenerativeModel(gemini_id)
-        response = model.generate_content("بصفتك " + persona + " بمستوى " + level + ":\n" + user_text, stream=True)
-        for chunk in response:
-            if chunk.text: yield chunk.text
-        return
+        try:
+            gemini_id = GEMINI_MODEL_IDS.get(model_id, "models/gemini-2.5-flash")
+            model = genai.GenerativeModel(gemini_id)
+            response = model.generate_content("بصفتك " + persona + " بمستوى " + level + ":\n" + user_text, stream=True)
+            for chunk in response:
+                if chunk.text: yield chunk.text
+            return
+        except Exception as e:
+            if is_quota_error(e):
+                st.warning("⚠️ تجاوزت حصة Gemini — يتم التبديل تلقائياً...")
+                yield fallback_response(user_text, sys_p)
+                return
+            raise
 
-    raise Exception("لا نموذج للبث")
+    yield fallback_response(user_text, sys_p)
 
 
 def text_to_speech(text):
@@ -628,11 +697,23 @@ def speech_to_text(audio_bytes):
 
 def translate_to_english(text):
     prompt = "Translate to English only:\n" + text
-    if api_key:
-        return genai.GenerativeModel("models/gemini-2.5-flash").generate_content(prompt).text.strip()
+    # Groq أولاً لتوفير حصة Gemini
     if groq_key and GROQ_AVAILABLE:
-        r = Groq(api_key=groq_key).chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":prompt}], max_tokens=200)
-        return r.choices[0].message.content.strip()
+        try:
+            r = Groq(api_key=groq_key).chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role":"user","content":prompt}], max_tokens=200
+            )
+            return r.choices[0].message.content.strip()
+        except:
+            pass
+    if api_key:
+        try:
+            return genai.GenerativeModel("models/gemini-2.5-flash").generate_content(prompt).text.strip()
+        except Exception as e:
+            if is_quota_error(e):
+                return text  # أعد النص كما هو إذا تجاوزت الحصة
+            raise
     return text
 
 # ══════════════════════════════════════════
