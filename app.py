@@ -3,7 +3,7 @@ import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 import io, base64, time, requests, urllib.parse
-import json, datetime, re
+import json, datetime, re, uuid
 from gtts import gTTS
 from PIL import Image
 from streamlit_mic_recorder import mic_recorder
@@ -239,13 +239,25 @@ def search_and_answer(query, engine, persona):
         return r.choices[0].message.content, results
 
     if api_key:
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
-        return model.generate_content(prompt).text, results
+        try:
+            model = genai.GenerativeModel("models/gemini-2.5-flash")
+            return model.generate_content(prompt).text, results
+        except Exception as e:
+            if not is_quota_error(e): raise
 
     if openrouter_key:
-        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-        r = client.chat.completions.create(model="openrouter/auto", messages=[{"role":"user","content":prompt}])
-        return r.choices[0].message.content, results
+        try:
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
+            r = client.chat.completions.create(model="openrouter/auto", messages=[{"role":"user","content":prompt}])
+            return r.choices[0].message.content, results
+        except: pass
+
+    if groq_key and GROQ_AVAILABLE:
+        try:
+            c = Groq(api_key=groq_key)
+            r = c.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":prompt}], max_tokens=2048)
+            return r.choices[0].message.content, results
+        except: pass
 
     return "لا نموذج متاح", results
 
@@ -295,11 +307,25 @@ def analyze_document(text, question, engine):
         )
         return r.choices[0].message.content
     if api_key:
-        return genai.GenerativeModel("models/gemini-2.5-flash").generate_content(prompt).text
+        try:
+            return genai.GenerativeModel("models/gemini-2.5-flash").generate_content(prompt).text
+        except Exception as e:
+            if not is_quota_error(e): raise
+
+    if groq_key and GROQ_AVAILABLE:
+        try:
+            c = Groq(api_key=groq_key)
+            r = c.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":prompt}], max_tokens=2048)
+            return r.choices[0].message.content
+        except: pass
+
     if openrouter_key:
-        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-        r = client.chat.completions.create(model="openrouter/auto", messages=[{"role":"user","content":prompt}])
-        return r.choices[0].message.content
+        try:
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
+            r = client.chat.completions.create(model="openrouter/auto", messages=[{"role":"user","content":prompt}])
+            return r.choices[0].message.content
+        except: pass
+
     raise Exception("لا نموذج متاح")
 
 # ══════════════════════════════════════════
@@ -311,9 +337,13 @@ def analyze_image_with_ai(image_bytes, question, engine):
     q = question or "صف هذه الصورة بالتفصيل"
 
     if api_key:
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
-        img_part = {"mime_type": "image/jpeg", "data": image_bytes}
-        return model.generate_content([q, img_part]).text
+        try:
+            model = genai.GenerativeModel("models/gemini-2.5-flash")
+            img_part = {"mime_type": "image/jpeg", "data": image_bytes}
+            return model.generate_content([q, img_part]).text
+        except Exception as e:
+            if not is_quota_error(e): raise
+            st.warning("⚠️ تجاوزت حصة Gemini — يتم التبديل...")
 
     if model_id in CLAUDE_MODEL_IDS and anthropic_key:
         try:
@@ -415,10 +445,16 @@ def multi_agent_response(user_text, persona):
             steps.append("**Groq (باحث):**\n" + agent1_result)
 
     if api_key:
-        with st.status("الوكيل 2 (Gemini): يحلل..."):
-            model = genai.GenerativeModel("models/gemini-2.5-flash")
-            agent2_result = model.generate_content("حلل واضف رؤى:\n" + (agent1_result or user_text)).text
-            steps.append("**Gemini (محلل):**\n" + agent2_result)
+        try:
+            with st.status("الوكيل 2 (Gemini): يحلل..."):
+                model = genai.GenerativeModel("models/gemini-2.5-flash")
+                agent2_result = model.generate_content("حلل واضف رؤى:\n" + (agent1_result or user_text)).text
+                steps.append("**Gemini (محلل):**\n" + agent2_result)
+        except Exception as e:
+            if is_quota_error(e):
+                st.toast("⚠️ حصة Gemini منتهية — تخطي الوكيل 2")
+            else:
+                raise
 
     final_result = ""
     if anthropic_key:
@@ -690,8 +726,9 @@ def speech_to_text(audio_bytes):
         try:
             model = genai.GenerativeModel("models/gemini-2.5-flash")
             return model.generate_content(["حول هذا الصوت لنص:", {"mime_type":"audio/wav","data":audio_bytes}]).text.strip()
-        except:
-            pass
+        except Exception as e:
+            if is_quota_error(e):
+                st.toast("⚠️ حصة Gemini منتهية للصوت")
     return None
 
 
@@ -769,6 +806,10 @@ for k, v in defaults.items():
 
 check_price_alerts()
 
+# تنبيه إذا لم يكن هناك بديل لـ Gemini
+if api_key and not groq_key and not openrouter_key:
+    st.sidebar.warning("⚠️ Gemini محدود بـ 20 طلب/يوم. أضف GROQ_API_KEY أو OPENROUTER_API_KEY كبديل مجاني.")
+
 # ══════════════════════════════════════════
 # 15. القائمة الجانبية
 # ══════════════════════════════════════════
@@ -836,6 +877,13 @@ with st.sidebar:
                           ("TAVILY",tavily_key),("TELEGRAM",telegram_token)]:
             st.write(name + ": " + ("✅" if key else "❌"))
         st.write("Pollinations: ✅ مجاني")
+        st.divider()
+        st.caption("حصة Gemini المجانية: 20 طلب/يوم")
+        st.caption("عند التجاوز يتحول تلقائياً لـ Groq أو OpenRouter")
+        if groq_key:
+            st.caption("Groq: ✅ بديل فعال (14,400 طلب/يوم)")
+        if openrouter_key:
+            st.caption("OpenRouter: ✅ بديل مجاني")
 
     with st.expander("المحادثات المحفوظة"):
         mem = load_memory()
@@ -994,7 +1042,7 @@ elif mode == "🎨 توليد صور":
             st.image(img_data["data"], use_column_width=True)
         else:
             st.image(img_data["data"], use_column_width=True)
-            st.download_button("تحميل", data=img_data["data"], file_name="image.png", mime="image/png", key="dl_"+str(i))
+            st.download_button("تحميل", data=img_data["data"], file_name="image.png", mime="image/png", key="dl_"+img_data.get("key", str(i)))
         st.divider()
 
     img_prompt = st.chat_input("صف الصورة...")
@@ -1007,7 +1055,7 @@ elif mode == "🎨 توليد صور":
                     fp = translate_to_english(img_prompt) if translate_prompt else img_prompt
                     fp += ", " + STYLE_MAP.get(img_style, "")
                     rtype, rdata = generate_image(IMAGE_MODELS[image_model], fp)
-                    st.session_state.generated_images.append({"prompt": img_prompt, "type": rtype, "data": rdata})
+                    st.session_state.generated_images.append({"prompt": img_prompt, "type": rtype, "data": rdata, "key": str(uuid.uuid4())[:8]})
                     st.rerun()
                 except Exception as e:
                     st.error("❌ " + str(e))
