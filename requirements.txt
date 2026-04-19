@@ -14,3 +14,6 @@ google-generativeai
 huggingface_hub>=0.28.0
 groq
 anthropic
+python-docx
+openpyxl
+requests
