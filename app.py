@@ -988,13 +988,13 @@ elif mode == "🖼️ تحليل صور":
 
 elif mode == "🎨 توليد صور":
     st.subheader("🎨 توليد الصور")
-    for img_data in st.session_state.generated_images:
+    for i, img_data in enumerate(st.session_state.generated_images):
         st.markdown("**الوصف:** " + img_data["prompt"])
         if img_data["type"] == "url":
             st.image(img_data["data"], use_column_width=True)
         else:
             st.image(img_data["data"], use_column_width=True)
-            st.download_button("تحميل", data=img_data["data"], file_name="image.png", mime="image/png", key="dl_"+img_data["prompt"][:10])
+            st.download_button("تحميل", data=img_data["data"], file_name="image.png", mime="image/png", key="dl_"+str(i))
         st.divider()
 
     img_prompt = st.chat_input("صف الصورة...")
